@@ -1,0 +1,24 @@
+# ── Draxo Client — Python-Abhängigkeiten ──────────────────────────────────────
+# Installieren: pip install -r requirements.txt
+
+# GUI-Framework
+customtkinter>=5.2.2
+
+# Bildverarbeitung (Logo, Thumbnails)
+Pillow>=10.4.0
+
+# System-Monitoring (CPU, RAM, Prozessliste)
+psutil>=6.0.0
+
+# Windows 11 Mica/Acrylic-Effekt (optional – Fehler werden ignoriert)
+pywinstyles>=1.8
+
+# CustomTkinter-Tooltips
+CTkToolTip>=0.8
+
+# ── Build-Tools (nur für die Entwicklung, nicht zur Laufzeit) ─────────────────
+# .exe erstellen
+pyinstaller>=6.0.0
+
+# Optionale Beschleunigung des PyInstaller-Builds (autospec statt manuellem spec)
+# pyinstaller-hooks-contrib>=2024.0

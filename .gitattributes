@@ -1,0 +1,15 @@
+# Windows-Projekt: Textdateien mit CRLF
+* text=auto eol=crlf
+
+# Binärdateien niemals umwandeln
+*.png binary
+*.ico binary
+*.dll binary
+*.exe binary
+*.ttf binary
+*.db binary
+
+# Build-Artefakte: LF ist hier korrekt
+*.sh text eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf

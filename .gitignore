@@ -1,0 +1,68 @@
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ── Build-Artefakte ───────────────────────────────────────────────────────────
+# dist/ = PyInstaller-Output (DraxoLauncher.exe)
+# build/ = gebaute DLLs, Prebuilt-DLLs, CMake-Cache, übersetzte Quellbäume
+build/
+dist/
+
+# ── Mappings-Cache von Mojang (jede Version mehrere MB) ───────────────────────
+tools/cache/
+
+# ── Binaries (werden als Release-Artefakte verteilt, nicht eingecheckt) ───────
+*.exe
+*.dll
+*.pdb
+*.lib
+*.obj
+*.ilk
+
+# ── Runtime-Konfiguration & Lizenz (NIE committen) ───────────────────────────
+config.json
+draxo_config.ini
+prebuilt/
+
+# ── Logs & Absturzberichte ────────────────────────────────────────────────────
+*.log
+*crashlog*.txt
+build_*.txt
+prebuild_*.txt
+
+# ── Secrets & Webhooks ────────────────────────────────────────────────────────
+discord_webhook.txt
+.env
+.env.*
+*.pem
+secrets/
+
+# ── Editor / Betriebssystem ───────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# ── Agent-/Tool-Verzeichnisse (lokal, nicht Teil des Projekts) ───────────────
+.freebuff/
+.agents/
+
+# ─> Fremde Referenzprojekte (nur lokal als Vorlage genutzt) <──────────────────
+Scaffold-master/
+
+# ─> ImGui: nur was der Build braucht (docs/examples sind Ballast) <───────────
+imgui/docs/
+imgui/examples/
+
+# Laufzeit-Konfiguration der DLL (versteckt, dotfile)
+.draxo_config.ini
+.draxo_server_binds.txt

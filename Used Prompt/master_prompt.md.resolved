@@ -1,0 +1,709 @@
+Master Prompt — Minecraft Java Edition (Forge 1.21.1) In-Game OpenGL Overlay Menu + ESP System
+Target Game: Minecraft Java Edition, running on the JVM via Forge mod loader (version 1.21.1). The game uses LWJGL + OpenGL for rendering. This project hooks OpenGL's wglSwapBuffers for the overlay. Game data is accessed via JNI + JVMTI since Minecraft is a Java application — we attach to the running JVM from native C++ code and call Java methods / read Java fields to extract entity positions, health, names, etc.
+
+CAUTION
+
+Forge uses TransformingClassLoader, NOT the bootstrap classloader. Standard JNIEnv::FindClass() will fail for most Minecraft classes. You MUST use JVMTI GetLoadedClasses to discover Forge's classloader, then call ClassLoader.loadClass() on it for all subsequent class lookups. This is the #1 cause of "class not found" errors.
+
+1 — PROJECT OVERVIEW & GOALS
+Build a Windows DLL (C++20, x64) that is injected into the Minecraft Java Edition process (javaw.exe) at runtime. Once loaded, the DLL must:
+
+Hook OpenGL's wglSwapBuffers (from opengl32.dll) using MinHook.
+Initialize Dear ImGui (OpenGL3 + Win32 backend) inside that hook so every frame an overlay is composited on top of Minecraft.
+Render a modern tabbed menu (toggled with INSERT key) containing cheat-module controls: checkboxes, sliders, color pickers, and custom toggle switches. The menu title should read "NULL CLIENT // Forge 1.21.1".
+Implement an ESP system that draws 2D bounding boxes, health bars, player/mob names, and distance text for every valid nearby entity.
+Clean up gracefully (unhook, destroy ImGui context, restore original WndProc) when the user presses DELETE.
+Critical: Minecraft is a Java application. All game-data retrieval is done via JNI (Java Native Interface) with JVMTI for class discovery. The DLL attaches to the running JVM inside javaw.exe, bootstraps Forge's classloader via JVMTI, then uses that classloader for all subsequent 
+findClass
+ calls.
+
+Obfuscation Note: Forge 1.21.1 uses Mojang's official mappings ("mojmap"), so class/method/field names are human-readable (e.g., Entity.getX(), LivingEntity.getHealth()). All class/method/field name strings should be centralized in a single 
+mappings.h
+ file so they can be easily updated.
+
+2 — ARCHITECTURE & PROJECT STRUCTURE
+project_root/
+├── CMakeLists.txt              # C++20 x64 SHARED, links opengl32, MinHook, ImGui (OpenGL3 backend)
+├── imgui/                      # Dear ImGui source (unmodified)
+│   ├── imgui.cpp / .h
+│   ├── imgui_draw.cpp / imgui_tables.cpp / imgui_widgets.cpp / imgui_demo.cpp
+│   └── backends/
+│       ├── imgui_impl_opengl3.cpp / .h
+│       └── imgui_impl_win32.cpp / .h
+├── minhook/                    # MinHook source (unmodified)
+└── src/
+    ├── pch.h                   # Precompiled header (Windows.h, jni.h, STL, MinHook.h, imgui.h, imgui_impl_opengl3.h, imgui_impl_win32.h)
+    ├── dllmain.cpp             # DLL entry point + init/unload thread
+    ├── jni_headers/            # Bundled: jni.h, jni_md.h, jvmti_min.h
+    ├── core/
+    │   ├── hooks.h / .cpp      # wglSwapBuffers + WndProc hooking
+    │   └── jvm_wrapper.h/.cpp  # JVM attachment, JVMTI classloader bootstrap, class cache
+    ├── config/
+    │   └── mappings.h          # All Minecraft class/method/field name strings
+    ├── sdk/
+    │   ├── entity.h / .cpp     # CEntity — wraps Entity jobject via JNI
+    │   ├── world.h / .cpp      # CWorld — iterates entity lists from ClientLevel
+    │   └── minecraft.h / .cpp  # CMinecraft — singleton, player, world, camera data
+    ├── modules/
+    │   ├── module.h            # Abstract base class (onRender only — no onUpdate)
+    │   ├── module_manager.h/.cpp  # Registry, renderAll, handleKey
+    │   └── esp.h / .cpp        # ESP module (JNI + drawing all in onRender)
+    └── render/
+        ├── renderer.h / .cpp   # ImGui + OpenGL3 bootstrap
+        ├── menu.h / .cpp       # Tabbed GUI with custom widgets
+        └── esp_renderer.h/.cpp # WorldToScreen + drawEntity
+Layer Responsibilities
+Layer	Responsibility
+dllmain	
+DllMain
+ → spawns 
+InitThread
+ → JvmWrapper::init() → ModuleManager::init() → Hooks::init() → wait for DELETE → cleanup → FreeLibraryAndExitThread
+core/hooks	Gets wglSwapBuffers from opengl32.dll via GetProcAddress → hooks with MinHook → hooks WndProc via SetWindowLongPtr. The hooked SwapBuffers drives: 
+beginFrame()
+ → Menu::render() → ModuleManager::renderAll() → 
+endFrame()
+core/jvm_wrapper	Calls JNI_GetCreatedJavaVMs to find the JVM. Gets JVMTI environment. Scans loaded classes via JVMTI to find Forge's TransformingClassLoader. Bootstraps it for ClassLoader.loadClass() calls. Provides 
+findClass()
+, 
+getMethodID()
+, 
+getFieldID()
+ with JVMTI fallback.
+config/mappings	Single header with all Minecraft class paths, method names, and JNI signatures.
+sdk/	JNI wrappers for Minecraft objects. All methods use JvmWrapper::getEnv() internally — no JNIEnv* params.
+modules/	Each feature inherits 
+Module
+ and implements 
+onRender()
+. ESP does all JNI reads AND drawing in the same 
+onRender()
+ call, wrapped in 
+PushLocalFrame
+/
+PopLocalFrame
+.
+render/	Owns ImGui context. OpenGL3 backend with glPushAttrib/glPopAttrib for state preservation.
+3 — DETAILED IMPLEMENTATION GUIDE
+3.1 — DLL Entry Point (dllmain.cpp)
+cpp
+static DWORD WINAPI InitThread(LPVOID param) {
+    AllocConsole(); freopen_s(..., "CONOUT$", "w", stdout);
+    // 1. JvmWrapper::init()         — attach JVM + JVMTI + bootstrap classloader
+    // 2. ModuleManager::init()      — cache JNI IDs (CMinecraft, CEntity, CWorld) + register modules
+    // 3. Hooks::init()              — hook wglSwapBuffers + WndProc
+    // 4. Loop: poll DELETE key
+    // 5. Cleanup: ModuleManager::shutdown() → Hooks::shutdown() → JvmWrapper::shutdown()
+    // 6. FreeLibraryAndExitThread
+}
+Key design rules:
+
+All rendering and game-state reads happen inside the hooked wglSwapBuffers, never from the init thread.
+JNI calls must happen on a thread attached to the JVM. The render thread must call 
+AttachCurrentThreadAsDaemon
+ if not already attached.
+Use 
+PushLocalFrame
+ / 
+PopLocalFrame
+ for JNI local ref cleanup.
+3.2 — JVM Wrapper with JVMTI (core/jvm_wrapper.cpp)
+IMPORTANT
+
+This is the most critical component. Incorrect class resolution causes silent failures — entities won't load, camera data won't resolve, and ESP will silently produce nothing.
+
+3.2.1 — Initialization
+cpp
+bool JvmWrapper::init() {
+    // 1. Find JVM
+    jsize vmCount = 0;
+    JNI_GetCreatedJavaVMs(&s_jvm, 1, &vmCount);
+    if (!s_jvm) return false;
+    // 2. Attach as daemon thread
+    JNIEnv* env = nullptr;
+    JavaVMAttachArgs args = { JNI_VERSION_1_8, "NullClient-Init", nullptr };
+    s_jvm->AttachCurrentThreadAsDaemon((void**)&env, &args);
+    // 3. Get JVMTI environment (critical for class discovery)
+    s_jvm->GetEnv((void**)&s_jvmti, JVMTI_VERSION_1_0);
+    // 4. Bootstrap Forge's classloader
+    bootstrapClassLoader(env);
+}
+3.2.2 — Classloader Bootstrapping (THE KEY TO EVERYTHING)
+Forge loads Minecraft classes with TransformingClassLoader, not the bootstrap classloader. Standard 
+FindClass
+ only searches the bootstrap classloader, so it fails for game classes. You must find and cache Forge's classloader:
+
+cpp
+void JvmWrapper::bootstrapClassLoader(JNIEnv* env) {
+    // Use JVMTI GetLoadedClasses to scan ALL loaded classes
+    jint classCount = 0;
+    jclass* classes = nullptr;
+    s_jvmti->GetLoadedClasses(&classCount, &classes);
+    // Find Minecraft class to get its classloader
+    for (jint i = 0; i < classCount; i++) {
+        char* sig = nullptr;
+        s_jvmti->GetClassSignature(classes[i], &sig, nullptr);
+        if (sig && strcmp(sig, "Lnet/minecraft/client/Minecraft;") == 0) {
+            // Get the classloader that loaded this class
+            s_gameClassLoader = env->NewGlobalRef(env->CallObjectMethod(
+                classes[i], env->GetMethodID(
+                    env->FindClass("java/lang/Class"), "getClassLoader",
+                    "()Ljava/lang/ClassLoader;")));
+            // Cache ClassLoader.loadClass method
+            jclass clClass = env->FindClass("java/lang/ClassLoader");
+            s_loadClassMethod = env->GetMethodID(clClass, "loadClass",
+                "(Ljava/lang/String;)Ljava/lang/Class;");
+            break;
+        }
+        s_jvmti->Deallocate((unsigned char*)sig);
+    }
+    s_jvmti->Deallocate((unsigned char*)classes);
+}
+3.2.3 — Class Lookup (3-Tier Strategy)
+cpp
+jclass JvmWrapper::findClass(const char* name) {
+    JNIEnv* env = getEnv();
+    // Tier 1: Use bootstrapped classloader (most reliable for game classes)
+    if (s_gameClassLoader && s_loadClassMethod) {
+        // Convert "net/minecraft/client/Minecraft" → "net.minecraft.client.Minecraft"
+        std::string dotName = name;
+        std::replace(dotName.begin(), dotName.end(), '/', '.');
+        jstring jname = env->NewStringUTF(dotName.c_str());
+        jclass cls = (jclass)env->CallObjectMethod(s_gameClassLoader, s_loadClassMethod, jname);
+        env->DeleteLocalRef(jname);
+        if (cls && !env->ExceptionCheck()) {
+            jclass globalRef = (jclass)env->NewGlobalRef(cls);
+            env->DeleteLocalRef(cls);
+            return globalRef;
+        }
+        if (env->ExceptionCheck()) env->ExceptionClear();
+    }
+    // Tier 2: Standard FindClass (works for java.* and system classes)
+    jclass cls = env->FindClass(name);
+    if (cls && !env->ExceptionCheck()) {
+        jclass globalRef = (jclass)env->NewGlobalRef(cls);
+        env->DeleteLocalRef(cls);
+        return globalRef;
+    }
+    if (env->ExceptionCheck()) env->ExceptionClear();
+    // Tier 3: JVMTI brute-force scan
+    // ... scan all loaded classes for matching signature ...
+    return nullptr;
+}
+3.2.4 — Method/Field Resolution with JVMTI Fallback
+cpp
+jmethodID JvmWrapper::getMethodID(jclass cls, const char* name, const char* sig) {
+    JNIEnv* env = getEnv();
+    // Try standard GetMethodID first
+    jmethodID mid = env->GetMethodID(cls, name, sig);
+    if (mid && !env->ExceptionCheck()) return mid;
+    if (env->ExceptionCheck()) env->ExceptionClear();
+    // Fallback: walk superclass chain (Forge may define methods on parent classes)
+    jclass current = (jclass)env->NewLocalRef(cls);
+    while (current) {
+        mid = env->GetMethodID(current, name, sig);
+        if (mid && !env->ExceptionCheck()) {
+            env->DeleteLocalRef(current);
+            return mid;
+        }
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        jclass super = env->GetSuperclass(current);
+        env->DeleteLocalRef(current);
+        current = super;
+    }
+    return nullptr;
+}
+3.2.5 — Thread Attachment
+Every thread calling JNI must be attached. The render thread (wglSwapBuffers) is NOT the init thread:
+
+cpp
+JNIEnv* JvmWrapper::getEnv() {
+    if (!s_jvm) return nullptr;
+    JNIEnv* env = nullptr;
+    jint result = s_jvm->GetEnv((void**)&env, JNI_VERSION_1_8);
+    if (result == JNI_EDETACHED) {
+        JavaVMAttachArgs args = { JNI_VERSION_1_8, "NullClient-Render", nullptr };
+        s_jvm->AttachCurrentThreadAsDaemon((void**)&env, &args);
+    }
+    return env;
+}
+3.2.6 — Minimal JVMTI Header (jvmti_min.h)
+You need a minimal JVMTI vtable header since the full JDK JVMTI header is huge. Define a struct with the correct vtable layout for GetLoadedClasses, 
+GetClassSignature
+, 
+Deallocate
+, and other needed functions. Match the vtable slot indices exactly.
+
+3.3 — Hooking OpenGL wglSwapBuffers (core/hooks.cpp)
+3.3.1 — Finding wglSwapBuffers
+Much simpler than DX9 — it's an exported function:
+
+cpp
+bool Hooks::init() {
+    MH_Initialize();
+    HMODULE opengl = GetModuleHandleA("opengl32.dll");
+    void* pSwapBuffers = (void*)GetProcAddress(opengl, "wglSwapBuffers");
+    MH_CreateHook(pSwapBuffers, &hkWglSwapBuffers, (void**)&oWglSwapBuffers);
+    MH_EnableHook(pSwapBuffers);
+    return true;
+}
+3.3.2 — The Hooked wglSwapBuffers
+cpp
+BOOL WINAPI Hooks::hkWglSwapBuffers(HDC hdc) {
+    // One-time init
+    if (!s_initialized) {
+        s_hwnd = WindowFromDC(hdc);
+        if (s_hwnd) {
+            oWndProc = (WNDPROC)SetWindowLongPtrA(s_hwnd, GWLP_WNDPROC, (LONG_PTR)hkWndProc);
+            Renderer::init(s_hwnd);
+            s_initialized = true;
+        }
+    }
+    if (!s_initialized) return oWglSwapBuffers(hdc);
+    // Render pipeline — NO separate tickAll/onUpdate step
+    Renderer::beginFrame();
+    Menu::render();
+    ModuleManager::renderAll();  // ESP does its own JNI + drawing inside onRender
+    Renderer::endFrame();
+    return oWglSwapBuffers(hdc);
+}
+IMPORTANT
+
+There is NO separate 
+tickAll()
+ step. Each module handles its own JNI inside 
+onRender()
+ with its own 
+PushLocalFrame
+/
+PopLocalFrame
+. This is critical because the JNI env must be valid during drawing.
+
+3.4 — ImGui Initialization & Rendering (render/renderer.cpp)
+3.4.1 — OpenGL3 Init
+cpp
+void Renderer::init(HWND hwnd) {
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    io.IniFilename = nullptr;
+    ImGui_ImplWin32_Init(hwnd);
+    ImGui_ImplOpenGL3_Init("#version 130");
+    setupStyle();
+}
+3.4.2 — Frame Lifecycle (OpenGL state preservation)
+cpp
+#include <GL/gl.h>  // For glPushAttrib/glPopAttrib only
+void Renderer::beginFrame() {
+    glPushAttrib(GL_ALL_ATTRIB_BITS);  // Save Minecraft's GL state
+    ImGui_ImplOpenGL3_NewFrame();
+    ImGui_ImplWin32_NewFrame();
+    ImGui::NewFrame();
+}
+void Renderer::endFrame() {
+    ImGui::EndFrame();
+    ImGui::Render();
+    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    glPopAttrib();  // Restore Minecraft's GL state
+}
+WARNING
+
+Do NOT include <GL/gl.h> in 
+pch.h
+ — it conflicts with ImGui's built-in OpenGL loader. Include it only locally in 
+renderer.cpp
+ where you need glPushAttrib/glPopAttrib.
+
+WARNING
+
+Do NOT define IMGUI_IMPL_OPENGL_LOADER_CUSTOM — let ImGui use its built-in loader for modern GL functions.
+
+3.5 — SDK Layer — Minecraft JNI Wrappers (sdk/)
+IMPORTANT
+
+All SDK methods use JvmWrapper::getEnv() internally. Do NOT pass JNIEnv* as a parameter. This simplifies the API and ensures the correct env is always used.
+
+3.5.1 — CMinecraft (sdk/minecraft.h)
+cpp
+class CMinecraft {
+public:
+    static bool initIDs();       // Uses JvmWrapper::findClass/getMethodID/getFieldID
+    static jobject getInstance();// Read static 'instance' field OR call getInstance()
+    static jobject getPlayer();  // mc.player field
+    static jobject getWorld();   // mc.level field
+    struct CameraData {
+        double x, y, z;
+        float  yaw, pitch, fov;
+        int    screenW, screenH;
+        bool   hasMatrices;
+        float  viewMatrix[16], projMatrix[16];
+        bool   valid;
+    };
+    static CameraData getCameraData();
+};
+getInstance() — Two strategies (try both):
+
+cpp
+jobject CMinecraft::getInstance() {
+    JNIEnv* env = JvmWrapper::getEnv();
+    // Strategy 1: Read static field 'instance' (most reliable in Forge)
+    if (s_instanceField) {
+        jobject mc = env->GetStaticObjectField(s_mcClass, s_instanceField);
+        if (mc) return mc;
+    }
+    // Strategy 2: Call getInstance() method
+    if (s_getInstance) {
+        jobject mc = env->CallStaticObjectMethod(s_mcClass, s_getInstance);
+        if (mc) return mc;
+    }
+    return nullptr;
+}
+getCameraData() — Camera uses FIELDS, not methods:
+
+cpp
+// Camera is NOT an Entity subclass. It stores position/rotation as FIELDS:
+//   Camera.position → Vec3 field (read x, y, z as doubles)
+//   Camera.yRot     → float field (yaw)
+//   Camera.xRot     → float field (pitch)
+// In initIDs():
+s_camPosition = env->GetFieldID(cameraClass, "position", "Lnet/minecraft/world/phys/Vec3;");
+s_camYRot = env->GetFieldID(cameraClass, "yRot", "F");
+s_camXRot = env->GetFieldID(cameraClass, "xRot", "F");
+// In getCameraData():
+jobject camera = env->CallObjectMethod(gameRenderer, s_getMainCamera);
+jobject pos = env->GetObjectField(camera, s_camPosition);  // Vec3 FIELD
+data.x = env->GetDoubleField(pos, fx);
+data.y = env->GetDoubleField(pos, fy);
+data.z = env->GetDoubleField(pos, fz);
+data.yaw   = env->GetFloatField(camera, s_camYRot);   // float FIELD
+data.pitch = env->GetFloatField(camera, s_camXRot);   // float FIELD
+Window — accessed as a FIELD on Minecraft, not via getWindow():
+
+cpp
+// In initIDs():
+s_window = env->GetFieldID(mcClass, "window", "Lcom/mojang/blaze3d/platform/Window;");
+s_getWidth  = env->GetMethodID(windowClass, "getWidth",  "()I");
+s_getHeight = env->GetMethodID(windowClass, "getHeight", "()I");
+// In getCameraData():
+jobject window = env->GetObjectField(mc, s_window);  // FIELD access
+data.screenW = env->CallIntMethod(window, s_getWidth);
+data.screenH = env->CallIntMethod(window, s_getHeight);
+FOV — read from Options.fov (OptionInstance<Integer>):
+
+cpp
+// Options.fov is an OptionInstance, call get() to get boxed Integer, then unbox
+jobject opts = env->GetObjectField(mc, s_options);
+jobject fovOpt = env->GetObjectField(opts, s_optFov);
+jobject fovBoxed = env->CallObjectMethod(fovOpt, s_optInstGet);  // OptionInstance.get()
+data.fov = (float)env->CallIntMethod(fovBoxed, intValueMethod);  // Integer.intValue()
+Matrices — from RenderSystem static methods:
+
+cpp
+// RenderSystem.getProjectionMatrix() → Matrix4f (org/joml/Matrix4f)
+// RenderSystem.getModelViewMatrix()  → Matrix4f
+// Matrix4f has float fields: m00, m01, m02, m03, m10, m11, ... m33
+// Read all 16 into float[16] arrays (column-major order)
+3.5.2 — CEntity (sdk/entity.h)
+cpp
+class CEntity {
+public:
+    explicit CEntity(jobject obj) : m_obj(obj) {}
+    bool isValid() const { return m_obj != nullptr; }
+    // All use JvmWrapper::getEnv() internally
+    double getX() const;
+    double getY() const;
+    double getZ() const;
+    float  getYaw() const;     // Entity.getYRot()
+    float  getPitch() const;   // Entity.getXRot()
+    float  getHealth() const;  // LivingEntity.getHealth()
+    float  getMaxHealth() const;
+    int    getId() const;
+    bool   isAlive() const;
+    bool   isLiving() const;   // env->IsInstanceOf(m_obj, s_livingClass)
+    bool   isPlayer() const;   // env->IsInstanceOf(m_obj, s_playerClass)
+    bool   isItem() const;     // env->IsInstanceOf(m_obj, s_itemClass)
+    std::string getName() const;
+    struct AABB { double minX, minY, minZ, maxX, maxY, maxZ; };
+    AABB getBoundingBox() const;
+    static bool initIDs();  // Uses JvmWrapper::findClass etc.
+private:
+    jobject m_obj;
+    static inline jclass s_entityClass, s_livingClass, s_playerClass, s_itemClass;
+    static inline jmethodID s_getX, s_getY, s_getZ, s_getHealth, s_getMaxHealth;
+    // ... all cached IDs
+};
+3.5.3 — CWorld (sdk/world.h)
+cpp
+class CWorld {
+public:
+    static bool initIDs();
+    static std::vector<CEntity> getPlayers(jobject worldObj);
+    static std::vector<CEntity> getAllEntities(jobject worldObj);  // NO env param
+};
+// getAllEntities uses entitiesForRendering() → Iterable → Iterator pattern
+std::vector<CEntity> CWorld::getAllEntities(jobject worldObj) {
+    JNIEnv* env = JvmWrapper::getEnv();
+    jobject iterable = env->CallObjectMethod(worldObj, s_entitiesForRendering);
+    jobject iterator = env->CallObjectMethod(iterable, s_iterator);
+    std::vector<CEntity> result;
+    while (env->CallBooleanMethod(iterator, s_hasNext)) {
+        jobject entity = env->CallObjectMethod(iterator, s_next);
+        if (entity) result.emplace_back(entity);
+    }
+    // cleanup local refs...
+    return result;
+}
+3.6 — Module System (modules/)
+3.6.1 — Base Class
+cpp
+class Module {
+public:
+    Module(const std::string& name, int keyBind);
+    virtual ~Module() = default;
+    virtual void onEnable() {}
+    virtual void onDisable() {}
+    virtual void onRender() {}   // ALL module logic goes here (JNI reads + drawing)
+    // NO onUpdate(JNIEnv*) — modules manage their own JNI in onRender()
+    void toggle();
+    void setEnabled(bool v);
+    bool isEnabled() const;
+protected:
+    bool m_enabled = false;
+    std::unordered_map<std::string, float>  m_floatSettings;
+    std::unordered_map<std::string, bool>   m_boolSettings;
+    std::unordered_map<std::string, ImVec4> m_colorSettings;
+};
+3.6.2 — Module Manager
+cpp
+class ModuleManager {
+public:
+    static void init();         // NO env param — uses JvmWrapper internally
+    static void shutdown();
+    static void renderAll();    // Calls onRender() on enabled modules
+    static void handleKey(int vk);
+    static Module* getModule(const std::string& name);
+};
+3.7 — EspRenderer — WorldToScreen (render/esp_renderer.h)
+EspRenderer is a CLASS with static camera state. 
+worldToScreen
+ takes world coordinates and subtracts camera position internally:
+
+cpp
+class EspRenderer {
+public:
+    // Call once per frame
+    static void updateCamera(double camX, double camY, double camZ,
+                             float yaw, float pitch, int screenW, int screenH);
+    static void setFOV(float fov);
+    static void setMatrices(bool hasMatrices, const float* view, const float* proj);
+    // Project WORLD coordinates to screen (subtracts camera internally)
+    static bool worldToScreen(double x, double y, double z, ImVec2& out);
+    // Draw all ESP elements for one entity
+    struct EspColors { ImU32 boxVisible, boxHidden, text; };
+    static void drawEntity(const CEntity& entity, bool drawBox, bool drawName,
+                           bool drawHealth, bool drawDistance, const EspColors& colors);
+private:
+    static inline double s_camX, s_camY, s_camZ;
+    static inline float  s_yaw, s_pitch, s_fov = 70.0f;
+    static inline int    s_screenW = 1920, s_screenH = 1080;
+    static inline bool   s_hasMatrices = false;
+    static inline float  s_viewMatrix[16], s_projMatrix[16];
+};
+3.7.1 — WorldToScreen (Matrix-Based Primary)
+cpp
+bool EspRenderer::worldToScreen(double x, double y, double z, ImVec2& out) {
+    double dx = x - s_camX, dy = y - s_camY, dz = z - s_camZ;
+    if (s_hasMatrices) {
+        // View transform: vec4 = (dx, dy, dz, 1.0) × viewMatrix
+        double clipX = dx*s_viewMatrix[0] + dy*s_viewMatrix[4] + dz*s_viewMatrix[8]  + s_viewMatrix[12];
+        double clipY = dx*s_viewMatrix[1] + dy*s_viewMatrix[5] + dz*s_viewMatrix[9]  + s_viewMatrix[13];
+        double clipZ = dx*s_viewMatrix[2] + dy*s_viewMatrix[6] + dz*s_viewMatrix[10] + s_viewMatrix[14];
+        double clipW = dx*s_viewMatrix[3] + dy*s_viewMatrix[7] + dz*s_viewMatrix[11] + s_viewMatrix[15];
+        // Projection transform
+        double ndcX = clipX*s_projMatrix[0] + clipY*s_projMatrix[4] + clipZ*s_projMatrix[8]  + clipW*s_projMatrix[12];
+        double ndcY = clipX*s_projMatrix[1] + clipY*s_projMatrix[5] + clipZ*s_projMatrix[9]  + clipW*s_projMatrix[13];
+        double ndcW = clipX*s_projMatrix[3] + clipY*s_projMatrix[7] + clipZ*s_projMatrix[11] + clipW*s_projMatrix[15];
+        if (ndcW < 0.1) return false;
+        out.x = (float)((ndcX/ndcW * 0.5 + 0.5) * s_screenW);
+        out.y = (float)((1.0 - (ndcY/ndcW * 0.5 + 0.5)) * s_screenH);
+        return true;
+    }
+    // Fallback: trigonometry (when matrices unavailable)
+    // ... yaw/pitch rotation to view space, perspective divide with FOV ...
+}
+3.7.2 — drawEntity
+drawEntity
+ gets the AABB from the entity, projects all 8 corners, computes enclosing 2D rect, draws box/name/health/distance. This keeps drawing logic out of the ESP module.
+
+3.8 — ESP Module (modules/esp.cpp)
+IMPORTANT
+
+ESP does ALL JNI reads AND drawing in 
+onRender()
+. It calls 
+PushLocalFrame(256)
+ at the start and 
+PopLocalFrame(nullptr)
+ at the end. There is no separate 
+onUpdate()
+ phase.
+
+cpp
+class ESP : public Module {
+public:
+    ESP() : Module("ESP", 0) {
+        m_enabled = true;  // On by default
+        m_boolSettings["draw_boxes"] = true;
+        m_boolSettings["draw_names"] = true;
+        m_boolSettings["draw_health"] = true;
+        m_boolSettings["draw_distance"] = true;
+        m_boolSettings["draw_animals"] = false;
+        m_boolSettings["draw_items"] = false;
+        m_floatSettings["max_distance"] = 200.0f;
+        m_colorSettings["box_visible"] = ImVec4(0.55f, 0.40f, 1.00f, 0.80f);
+        m_colorSettings["text_color"]  = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
+    }
+    void onRender() override;   // Only override — no onUpdate
+};
+3.8.1 — ESP::onRender() Flow
+1.  if (!m_enabled) return;
+2.  env = JvmWrapper::getEnv(); if (!env) return;
+3.  env->PushLocalFrame(256);
+4.  localPlayer = CMinecraft::getPlayer();  // no env param
+5.  camData = CMinecraft::getCameraData();  // no env param
+6.  EspRenderer::setFOV(camData.fov);
+7.  EspRenderer::setMatrices(camData.hasMatrices, ...);
+8.  screenW/H from camData or fallback to ImGui DisplaySize
+9.  EspRenderer::updateCamera(camX, camY, camZ, yaw, pitch, screenW, screenH);
+10. worldObj = CMinecraft::getWorld();
+11. entities = CWorld::getAllEntities(worldObj);  // no env param
+12. For each entity:
+    a. Skip self (getId match)
+    b. Skip dead (!isAlive)
+    c. Categorize: isPlayer, isLiving, isItem
+    d. Apply category filters
+    e. Distance check
+    f. Color-code by type
+    g. EspRenderer::drawEntity(entity, boxes, names, health, distance, colors);
+13. env->PopLocalFrame(nullptr);
+3.9 — Mappings Header (config/mappings.h)
+cpp
+namespace Mappings {
+    // Classes
+    constexpr auto Minecraft_Class     = "net/minecraft/client/Minecraft";
+    constexpr auto Entity_Class        = "net/minecraft/world/entity/Entity";
+    constexpr auto LivingEntity_Class  = "net/minecraft/world/entity/LivingEntity";
+    constexpr auto Player_Class        = "net/minecraft/world/entity/player/Player";
+    constexpr auto ItemEntity_Class    = "net/minecraft/world/entity/item/ItemEntity";
+    constexpr auto ClientLevel_Class   = "net/minecraft/client/multiplayer/ClientLevel";
+    constexpr auto Camera_Class        = "net/minecraft/client/Camera";
+    constexpr auto GameRenderer_Class  = "net/minecraft/client/renderer/GameRenderer";
+    constexpr auto RenderSystem_Class  = "com/mojang/blaze3d/systems/RenderSystem";
+    constexpr auto Matrix4f_Class      = "org/joml/Matrix4f";
+    constexpr auto Vec3_Class          = "net/minecraft/world/phys/Vec3";
+    constexpr auto AABB_Class          = "net/minecraft/world/phys/AABB";
+    constexpr auto Options_Class       = "net/minecraft/client/Options";
+    constexpr auto List_Class          = "java/util/List";
+    constexpr auto Level_Class         = "net/minecraft/world/level/Level";
+    // Entity methods
+    constexpr auto Entity_getX = "getX";  constexpr auto Entity_getX_Sig = "()D";
+    constexpr auto Entity_getY = "getY";  constexpr auto Entity_getY_Sig = "()D";
+    constexpr auto Entity_getZ = "getZ";  constexpr auto Entity_getZ_Sig = "()D";
+    constexpr auto Entity_isAlive = "isAlive"; constexpr auto Entity_isAlive_Sig = "()Z";
+    constexpr auto Entity_getId = "getId";     constexpr auto Entity_getId_Sig = "()I";
+    // ... etc for all methods/fields
+    // Minecraft fields
+    constexpr auto MC_getInstance = "getInstance";
+    constexpr auto MC_getInstance_Sig = "()Lnet/minecraft/client/Minecraft;";
+    constexpr auto MC_player = "player";
+    constexpr auto MC_level  = "level";
+    // ... etc
+}
+3.10 — Build System (CMakeLists.txt)
+cmake
+cmake_minimum_required(VERSION 3.20)
+project(Overlay LANGUAGES CXX)
+set(CMAKE_CXX_STANDARD 20)
+add_subdirectory(minhook)
+set(IMGUI_DIR "${CMAKE_SOURCE_DIR}/imgui")
+set(IMGUI_SOURCES
+    ${IMGUI_DIR}/imgui.cpp ${IMGUI_DIR}/imgui_draw.cpp
+    ${IMGUI_DIR}/imgui_tables.cpp ${IMGUI_DIR}/imgui_widgets.cpp
+    ${IMGUI_DIR}/imgui_demo.cpp
+    ${IMGUI_DIR}/backends/imgui_impl_opengl3.cpp
+    ${IMGUI_DIR}/backends/imgui_impl_win32.cpp
+)
+file(GLOB_RECURSE PROJECT_SOURCES "src/*.cpp")
+add_library(overlay SHARED ${PROJECT_SOURCES} ${IMGUI_SOURCES})
+target_include_directories(overlay PRIVATE
+    ${CMAKE_SOURCE_DIR}/src ${IMGUI_DIR} ${IMGUI_DIR}/backends
+)
+target_link_libraries(overlay PRIVATE minhook opengl32)
+target_compile_definitions(overlay PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS)
+WARNING
+
+Link opengl32 NOT d3d9. Do NOT add IMGUI_IMPL_OPENGL_LOADER_CUSTOM — let ImGui use its built-in loader.
+
+4 — CRITICAL IMPLEMENTATION NOTES
+JVMTI is mandatory. Without JVMTI classloader bootstrapping, 
+FindClass
+ will fail for all Minecraft classes under Forge. This is the single most important requirement.
+
+Camera uses FIELDS not methods. Camera.position is a 
+Vec3
+ field. Camera.yRot and Camera.xRot are float fields. Do NOT try to call getPosition() or getYRot() methods — they may not exist.
+
+Window is a FIELD. Access Minecraft.window as a field, not via getWindow() method. The class is com/mojang/blaze3d/platform/Window.
+
+No separate onUpdate/tickAll pattern. The ESP module does its JNI reads AND drawing inside 
+onRender()
+, wrapped in 
+PushLocalFrame
+/
+PopLocalFrame
+. Do NOT split JNI work into a separate 
+onUpdate(JNIEnv*)
+ method.
+
+SDK methods take no JNIEnv* param. All SDK classes (
+CMinecraft
+, 
+CWorld
+, 
+CEntity
+) call JvmWrapper::getEnv() internally.
+
+OpenGL state preservation. Use glPushAttrib(GL_ALL_ATTRIB_BITS) / glPopAttrib() around ImGui rendering in the SwapBuffers hook to avoid corrupting Minecraft's GL state.
+
+Do NOT include <GL/gl.h> in pch.h. It conflicts with ImGui's built-in OpenGL3 loader. Include it only locally where needed (e.g., 
+renderer.cpp
+).
+
+AttachCurrentThreadAsDaemon, not 
+AttachCurrentThread
+, to avoid preventing JVM shutdown.
+
+Exception handling: After every JNI call that could fail, check env->ExceptionCheck() and clear with env->ExceptionClear(). Silent exceptions will corrupt subsequent JNI calls.
+
+Minecraft singleton in Forge may be stored as a static FIELD called instance rather than being accessible via a static method 
+getInstance()
+. Try the field first, method second.
+
+5 — SUMMARY CHECKLIST
+ DLL injects and init thread runs
+ JVMTI environment acquired, Forge classloader bootstrapped
+ All Minecraft classes found via ClassLoader.loadClass()
+ wglSwapBuffers hook fires every frame
+ ImGui renders on top of Minecraft without corrupting GL state
+ INSERT toggles the menu; mouse captured when menu open
+ DELETE cleanly unloads DLL
+ ESP draws 2D boxes around entities
+ Health bars show green→yellow→red gradient
+ Names centered above box with dark background
+ Distance labels below box
+ Self (local player) filtered out
+ Dead entities filtered
+ Distance filter respects slider
+ W2S handles behind-camera correctly (returns false)
+This prompt is self-contained. An AI given this document plus the ImGui and MinHook libraries should produce a complete, compilable OpenGL overlay + ESP project that works with Minecraft Forge 1.21.1.
