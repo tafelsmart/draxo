@@ -24,6 +24,7 @@ Beispiele:
 import argparse
 import ctypes
 import ctypes.wintypes as wintypes
+import io
 import json
 import os
 import re
@@ -33,6 +34,7 @@ import subprocess
 import sys
 import time
 import urllib.request
+import zipfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC_DIR = os.path.join(ROOT, "src")
@@ -42,6 +44,25 @@ BUILD_DIR = os.path.join(ROOT, "build", "vanilla")
 TRANS_SRC = os.path.join(ROOT, "build", "vanilla_src")
 
 PISTON_MANIFEST = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
+FABRIC_MAVEN = "https://maven.fabricmc.net/net/fabricmc/intermediary"
+
+# Unterstützte Instanz-Typen. "vanilla" läuft obfuskiert, forge/neoforge mit
+# offiziellen Mojang-Namen, fabric mit Intermediary-Namen (class_2248).
+FLAVORS = ("vanilla", "fabric", "forge", "neoforge")
+
+# DLL-Dateiname je Flavor. Vanilla+Fabric+Forge brauchen eigene DLLs, weil
+# die Laufzeitnamen unterschiedlich obfuskiert sind.
+FLAVOR_DLL = {
+    "vanilla": "draxo.dll",
+    "fabric": "draxo_fabric.dll",
+    "forge": "draxo_forge.dll",
+    "neoforge": "draxo_forge.dll",
+}
+
+# Ab dieser Version liefert Mojang keine client_mappings mehr; die Client-JAR
+# ist nicht mehr obfuskiert. Für Forge/NeoForge/Fabric gelten dann durchgehend
+# die offiziellen Namen — es braucht keine Übersetzung.
+UNOBFUSCATED_FROM = (26, 0)
 
 # ─────────────────────────────────────────────────────────────────────────
 # 1) Offizielle Mappings laden
@@ -74,6 +95,20 @@ def is_obfuscated_version(version):
     return not (m and int(m.group(1)) >= 26)
 
 
+def dll_name_for(flavor):
+    """DLL-Dateiname für einen Flavor (Fallback: vanilla)."""
+    return FLAVOR_DLL.get((flavor or "vanilla").lower(), "draxo.dll")
+
+
+def needs_intermediary(flavor):
+    """True, wenn der Flavor Intermediary-Namen (class_2248) zur Laufzeit nutzt.
+
+    Nur Fabric. Forge/NeoForge ab 1.17 nutzen offizielle Namen, Vanilla
+    (bis 1.21.x) nutzt die volle Mojang-Obfuskation.
+    """
+    return (flavor or "").lower() == "fabric"
+
+
 def download_client_mappings(version):
     """Liefert Pfad zur client_mappings-Datei oder None, wenn die Version
     nicht obfuskiert ist (26.x) und keine Mappings benötigt."""
@@ -97,6 +132,233 @@ def download_client_mappings(version):
         f.write(data)
     print(f"[*] Gespeichert: {dest} ({len(data)//1024} KiB)")
     return dest
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# 1b) Fabric-Intermediary-Mappings
+# ─────────────────────────────────────────────────────────────────────────
+# Fabric lädt Minecraft zur Laufzeit mit INTERMEDIARY-Namen ("class_2248"
+# statt "net/minecraft/client/Minecraft"). Das ist weder die Vanilla-
+# Obfuskation ("fbi") noch der Forge-Satz mit offiziellen Namen — eine
+# eigene, dritte Namenswelt. Ohne diese DLL crasht der Client mit
+# NoSuchFieldError aus GetStaticFieldID, sobald die erste Konstante
+# aufgelöst wird.
+#
+# Das tiny-v2-Format wird hier auf dieselbe 3-Tupel-Form gebracht wie
+# parse_mappings(), damit translate_mappings() unverändert funktioniert.
+
+def _intermediary_urls(version):
+    """Mögliche Jar-URLs für eine Version (Reihenfolge = Präferenz)."""
+    return [
+        f"{FABRIC_MAVEN}/{version}/intermediary-{version}-v2.jar",
+        f"{FABRIC_MAVEN}/{version}/intermediary-{version}.jar",
+    ]
+
+
+def download_intermediary(version):
+    """Lädt die Intermediary-Mappings einer Fabric-Version.
+
+    Liefert den Pfad zur JAR (Cache) oder None, wenn für diese Version
+    keine Intermediary-Übersetzung nötig ist. Das ist ab 26.x der Fall:
+    Minecraft wird dort nicht mehr obfuskiert, und Fabric liefert folglich
+    eine leere mappings.tiny (die JAR bleibt zwar existieren, enthält aber
+    keine Klassen). In dem Fall gelten auch für Fabric die offiziellen
+    Namen — genau wie bei Vanilla.
+    """
+    if not is_obfuscated_version(version):
+        print(f"[*] Fabric {version}: Minecraft nicht obfuskiert — "
+              "offizielle Namen gelten auch für Fabric.")
+        return None
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    dest = os.path.join(CACHE_DIR, f"intermediary_{version}.jar")
+    if os.path.exists(dest) and os.path.getsize(dest) > 1000:
+        print(f"[*] Intermediary-Cache für {version}: {dest}")
+        return dest
+    last_error = None
+    for url in _intermediary_urls(version):
+        try:
+            print(f"[*] Lade Fabric-Intermediary-Mappings für {version} …")
+            data = http_get(url, timeout=120)
+        except Exception as exc:  # noqa: BLE001
+            last_error = exc
+            continue
+        # Leere Hülle (572 Bytes, keine Klassen): ab 26.x liefert Fabric
+        # keine Intermediary-Namen mehr, weil Minecraft nicht obfuskiert ist.
+        # Das ist KEIN Fehler — dann gelten die offiziellen Namen.
+        if not _intermediary_has_classes(data):
+            print(f"[*] Fabric {version}: Intermediary-Mappings sind leer — "
+                  "Minecraft wird nicht obfuskiert, offizielle Namen gelten.")
+            return None
+        with open(dest, "wb") as f:
+            f.write(data)
+        print(f"[*] Gespeichert: {dest} ({len(data)//1024} KiB)")
+        return dest
+    raise RuntimeError(
+        f"Fabric-Intermediary-Mappings für {version} nicht verfügbar "
+        f"(Fabric unterstützt diese Version evtl. nicht): {last_error}")
+
+
+def _intermediary_has_classes(data):
+    """True, wenn die JAR mappings.tiny mit echten Klassen enthält."""
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            entry = next((n for n in zf.namelist() if n.endswith("mappings.tiny")), None)
+            if entry is None:
+                return False
+            with zf.open(entry) as fh:
+                for _ in range(200):
+                    line = fh.readline()
+                    if not line:
+                        break
+                    if line.startswith(b"c\t"):
+                        return True
+            return False
+    except (zipfile.BadZipFile, OSError):
+        return False
+
+
+def parse_intermediary(jar_path, mojang_class_map=None,
+                       mojang_methods=None, mojang_fields=None):
+    """Liest mappings.tiny aus einer Intermediary-JAR und verkettet sie mit Mojang.
+
+    WICHTIG: Der Header der JAR sagt zwar "official -> intermediary", die
+    linke Seite enthält aber die MOJANG-OBFUSKATION ("aog", "flk"), nicht
+    die offiziellen Namen. Das mappings.h des Projekts ist in offiziellen
+    Namen geschrieben. Deshalb wird verkettet:
+
+        offizieller Name --(Mojang client.txt)--> obf --(intermediary)--> class_1234
+
+    ``mojang_class_map`` ist der class_map aus parse_mappings()
+    ({offizieller_jni_pfad: obf_jni_pfad}). Ist er None, werden die Roh-
+    Obf-Namen zurückgegeben (nur zum Debuggen sinnvoll).
+
+    Rückgabe: (class_map, methods, fields) in der Form von parse_mappings(),
+    aber mit intermediary- statt obf-Zielen. translate_mappings() kann
+    damit unverändert arbeiten.
+    """
+    try:
+        with zipfile.ZipFile(jar_path) as zf:
+            names = zf.namelist()
+            entry = next((n for n in names if n.endswith("mappings.tiny")), None)
+            if entry is None:
+                raise RuntimeError(
+                    "Keine mappings.tiny in der Intermediary-JAR gefunden.")
+            text = zf.read(entry).decode("utf-8")
+    except zipfile.BadZipFile as exc:
+        raise RuntimeError(f"Intermediary-JAR beschädigt: {jar_path}") from exc
+
+    lines = text.splitlines()
+    if not lines or not lines[0].startswith("tiny"):
+        raise RuntimeError("Unerwartetes tiny-Format in der Intermediary-JAR.")
+
+    # ── 1) Rohdaten sammeln: obf -> intermediary ─────────────────────
+    obf_classes: dict[str, str] = {}
+    obf_methods: dict[str, dict[str, list]] = {}
+    obf_fields: dict[str, dict[str, str]] = {}
+    cur = None
+    for line in lines[1:]:
+        if not line:
+            continue
+        # tiny-v2: Klassenzeilen beginnen mit 'c', Mitgliederzeilen sind um
+        # eine Ebene eingerückt und beginnen deshalb mit einem TAB — das
+        # Kind steht dann in Spalte 1 statt 0. Die Spaltenbelegung ist:
+        #   Klasse : c <obf_name> <intermediary_name>
+        #   Methode: \tm <obf_desc> <obf_name> <intermediary_name>
+        #   Feld   : \tf <obf_desc> <obf_name> <intermediary_name>
+        parts = line.split("\t")
+        kind = parts[0] if parts[0] else (parts[1] if len(parts) > 1 else "")
+        if kind == "c":
+            if len(parts) < 3:
+                continue
+            cur = parts[1]
+            obf_classes[cur] = parts[2]
+            obf_methods.setdefault(cur, {})
+            obf_fields.setdefault(cur, {})
+        elif kind == "m" and cur:
+            if len(parts) < 5:
+                continue
+            desc, obf_name, mid_name = parts[2], parts[3], parts[4]
+            if obf_name == "<init>":
+                continue
+            obf_methods[cur].setdefault(obf_name, []).append((desc, mid_name))
+        elif kind == "f" and cur:
+            if len(parts) < 5:
+                continue
+            obf_fields[cur][parts[3]] = parts[4]
+
+    if not obf_classes:
+        raise RuntimeError("Intermediary-Mappings enthalten keine Klassen.")
+
+    if not mojang_class_map:
+        print(f"[*] Intermediary (roh, ohne Verkettung): {len(obf_classes)} Klassen")
+        return (obf_classes, obf_methods, obf_fields)
+
+    # ── 2) Verketten: offizieller jni -> obf -> intermediary ────────
+    #    Member brauchen eine ZWEITE Stufe: in der JAR sind auch die
+    #    Deskriptoren obfuskiert ("Lflk;"), und die Member-Schlüssel sind
+    #    die Mojang-obf-Namen ("A", "D"). Deshalb wird pro Methode/Feld
+    #    zuerst der offizielle Name über die Mojang-Mappings bestimmt und
+    #    erst dann der intermediary-Name nachgeschlagen.
+    class_map: dict[str, str] = {}
+    methods: dict[str, dict[str, list]] = {}
+    fields: dict[str, dict[str, str]] = {}
+    for official_jni, obf_jni in mojang_class_map.items():
+        mid = obf_classes.get(obf_jni)
+        if mid is None:
+            continue
+        class_map[official_jni] = mid
+        # Mojang-Schlüssel: offizieller Name -> Liste (offiz_sig, obf_name)
+        off2obf_m = mojang_methods.get(official_jni, {})
+        off2obf_f = mojang_fields.get(official_jni, {})
+        jar_m = obf_methods.get(obf_jni, {})
+        jar_f = obf_fields.get(obf_jni, {})
+
+        # Methoden: offizieller Name/Signatur -> intermediary
+        conv_m: dict[str, list] = {}
+        for off_name, overloads in off2obf_m.items():
+            for off_sig, obf_name in overloads:
+                hits = jar_m.get(obf_name)
+                if not hits:
+                    continue
+                # Signaturen vergleichen, um Überladungen auseinanderzuhalten.
+                # Die JAR nutzt obf-klassen im Deskriptor -> übersetzen.
+                for jar_sig, mid_name in hits:
+                    if _obf_sig_to_official(jar_sig, mojang_class_map) == off_sig:
+                        conv_m.setdefault(off_name, []).append((off_sig, mid_name))
+                        break
+                else:
+                    conv_m.setdefault(off_name, []).append((off_sig, hits[0][1]))
+        methods[official_jni] = conv_m
+
+        # Felder: offizieller Name -> intermediary
+        conv_f: dict[str, str] = {}
+        for off_name, obf_name in off2obf_f.items():
+            mid_name = jar_f.get(obf_name)
+            if mid_name is not None:
+                conv_f[off_name] = mid_name
+        fields[official_jni] = conv_f
+
+    if not class_map:
+        raise RuntimeError(
+            "Verkettung der Intermediary-Mappings fehlgeschlagen: kein einziger "
+            "offizieller Klassenname ließ sich über den Mojang-obf-Namen auflösen. "
+            "Die JAR passt vermutlich nicht zu dieser Minecraft-Version.")
+
+    total_methods = sum(len(v) for v in methods.values())
+    total_fields = sum(len(v) for v in fields.values())
+    print(f"[*] Intermediary (offiziell -> intermediary): {len(class_map)} Klassen, "
+          f"{total_methods} Methoden, {total_fields} Felder")
+    if len(class_map) < len(obf_classes) * 0.9:
+        print(f"[!] Achtung: nur {len(class_map)} von {len(obf_classes)} "
+              "Klassen konnten verkettet werden.")
+    return class_map, methods, fields
+
+
+def _obf_sig_to_official(sig, class_map):
+    """Wandelt einen Deskriptor mit obf-Klassennamen in offizielle um."""
+    return re.sub(r"L([\w/$]+);",
+                  lambda m: "L" + class_map.get(m.group(1), m.group(1)) + ";",
+                  sig)
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -546,11 +808,15 @@ def _write_if_changed(path, content):
 # 4) Build
 # ─────────────────────────────────────────────────────────────────────────
 
-def find_prebuilt_dll(version, forge=False):
-    """Liefert eine vorgefertigte DLL für die Version, falls vorhanden.
+def find_prebuilt_dll(version, forge=False, flavor=None):
+    """Liefert eine vorgefertigte DLL für Version+Flavor, falls vorhanden.
 
-    build/prebuilt/<version>/draxo.dll        (Vanilla, obfuskiert)
-    build/prebuilt/<version>/draxo_forge.dll  (Forge/NeoForge 1.17+)
+    build/prebuilt/<version>/draxo.dll          (Vanilla, obfuskiert)
+    build/prebuilt/<version>/draxo_fabric.dll   (Fabric, intermediary)
+    build/prebuilt/<version>/draxo_forge.dll    (Forge/NeoForge, offiziell)
+
+    ``flavor`` ist die neue, explizite Form; ``forge`` bleibt als
+    Rückwärtskompatibilität erhalten (forge=True -> "forge").
 
     ROOT wird dynamisch gelesen, damit builder_runner (Frozen .exe) die
     Pfade nach dem Laden umbiegen kann. Zusätzlich wird im Frozen-Bundle
@@ -559,12 +825,14 @@ def find_prebuilt_dll(version, forge=False):
     """
     if not version or version == "?":
         return None
-    name = "draxo_forge.dll" if forge else "draxo.dll"
-    # 1) Stablier Ordner neben der .exe (bzw. Projekt-Root im Dev-Modus)
-    for base in (ROOT,):
-        path = os.path.join(base, "build", "prebuilt", version, name)
-        if os.path.isfile(path) and os.path.getsize(path) > 1000:
-            return path
+    if flavor is None:
+        flavor = "forge" if forge else "vanilla"
+    flavor = flavor.lower()
+    name = dll_name_for(flavor)
+    # 1) Stabiler Ordner neben der .exe (bzw. Projekt-Root im Dev-Modus)
+    path = os.path.join(ROOT, "build", "prebuilt", version, name)
+    if os.path.isfile(path) and os.path.getsize(path) > 1000:
+        return path
     # 2) Frozen-Bundle (_MEIPASS/prebuilt/...)
     meipass = getattr(sys, "_MEIPASS", None)
     if meipass:
@@ -572,6 +840,17 @@ def find_prebuilt_dll(version, forge=False):
         if os.path.isfile(path) and os.path.getsize(path) > 1000:
             return path
     return None
+
+
+def list_prebuilt_flavors(version):
+    """Welche Flavors sind für diese Version vorgefertigt? -> Liste."""
+    if not version or version == "?":
+        return []
+    found = []
+    for flavor in FLAVORS:
+        if find_prebuilt_dll(version, flavor=flavor):
+            found.append(flavor)
+    return found
 
 
 def find_cmake():
@@ -612,7 +891,7 @@ def find_cmake():
     return None
 
 
-def build(version):
+def build(version, flavor="vanilla"):
     if not os.path.exists(TRANS_SRC):
         raise RuntimeError("Übersetzter Quellbaum fehlt — zuerst übersetzen "
                            "(--translate-only oder ohne --build-only)")
@@ -620,23 +899,35 @@ def build(version):
     if not cmake:
         raise RuntimeError("cmake nicht gefunden. Visual Studio 2022 installieren "
                            "oder cmake in PATH legen.")
-    os.makedirs(BUILD_DIR, exist_ok=True)
-    print(f"[*] Konfiguriere Build (cmake: {cmake}) …")
+    # Pro Flavor ein eigener Build-Ordner: mappings.h ist je nach Flavor
+    # unterschiedlich übersetzt. Ein gemeinsamer Ordner würde die übersetzten
+    # Namen des zuletzt gebauten Flavors überschreiben und still die falsche
+    # DLL erzeugen.
+    build_dir = os.path.join(BUILD_DIR, flavor)
+    os.makedirs(build_dir, exist_ok=True)
+    print(f"[*] Konfiguriere Build ({flavor}, cmake: {cmake}) …")
     # CREATE_NO_WINDOW: kein Konsolenfenster-Flackern beim Build aus der .exe
     _no_win = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
-    subprocess.run([cmake, "-S", ROOT, "-B", BUILD_DIR,
+    subprocess.run([cmake, "-S", ROOT, "-B", build_dir,
                     f"-DCLIENT_SRC_DIR={TRANS_SRC}", "-A", "x64"],
                    check=True, creationflags=_no_win)
     print("[*] Baue DLL …")
     # --parallel = alle CPU-Kerne nutzen (kein Serial-Build mehr).
     # MSVC/MSBuild kompiliert parallel — spart bei Voll-Rebuilds viel Zeit,
     # kostet NICHTS an Laufzeit-Leistung im Spiel.
-    subprocess.run([cmake, "--build", BUILD_DIR, "--config", "Release",
+    subprocess.run([cmake, "--build", build_dir, "--config", "Release",
                     "--parallel"],
                    check=True, creationflags=_no_win)
-    dll = os.path.join(BUILD_DIR, "Release", "draxo.dll")
-    if not os.path.exists(dll):
-        raise RuntimeError("draxo.dll wurde nicht erzeugt: " + dll)
+    # CMake erzeugt immer "draxo" (add_library-Name). Anschließend auf den
+    # flavor-spezifischen Namen umbenennen, damit find_prebuilt_dll() und
+    # der Bundle-Import die Flavors auseinanderhalten können.
+    produced = os.path.join(build_dir, "Release", "draxo.dll")
+    dll = os.path.join(build_dir, "Release", dll_name_for(flavor))
+    if not os.path.exists(produced):
+        raise RuntimeError("draxo.dll wurde nicht erzeugt: " + produced)
+    if os.path.abspath(produced) != os.path.abspath(dll):
+        shutil.copy2(produced, dll)
+        print(f"[*] Als {os.path.basename(dll)} abgelegt")
     print(f"[+] Fertig: {dll}")
     return dll
 
@@ -857,20 +1148,47 @@ def _best_cached_version(cand):
 def _profile_flavor(cmd):
     """Erkennt den Instanz-Typ aus der Kommandozeile.
 
-    Forge/NeoForge 1.17+ laufen zur Laufzeit mit OFFIZIELLEN Mojang-Namen
-    (nicht obfuskiert) — der Builder darf dann KEINE Übersetzung anwenden.
+    Wichtig ist die REIHENFOLGE der Marker:
+      1. Labymod  — läuft wie Vanilla (offizielle Namen? nein: obfuskiert)
+      2. Fabric   — intermediary-Namen
+      3. NeoForge / Forge — offizielle Namen
+
+    Verliert man einen Fabric-Client, weil der Classpath zufällig "forge"
+    enthält (z.B. durch ein Mod), wird die falsche DLL injiziert und der
+    Spiel-Prozess stürzt mit NoSuchFieldError ab. Deshalb wird zuerst nach
+    den eindeutigen Loader-Markern gesucht und nur bei deren Abwesenheit
+    auf das unscharfe "forge"-Substring zurückgefallen.
     """
     low = (cmd or "").lower()
-    # Labymod 4 läuft mit OFFIZIELLEN Mojang-Namen (wie Vanilla, nicht obfuskiert).
-    # Die 'labyforge'/forge-dir-Strings in der Commandline sind nur Addon-Stubs —
-    # NICHT als Forge-Instanz werten, sonst wird fälschlich draxo_forge.dll gesucht.
+    if not low:
+        return "vanilla"
+
+    # Fabric Loader setzt -Dfabric.* und führt fabric-loader/fabric-<version>
+    # im Classpath — beides eindeutig.
+    if "fabric-loader" in low or "net.fabricmc" in low or "fabric.gameVersion" in low:
+        return "fabric"
+
+    # Labymod 4 startet Minecraft selbst; die 'labyforge'/forge-Strings im
+    # Classpath sind nur Addon-Stubs und KEIN Forge-Indikator.
     if "net.labymod" in low or "labymod" in low:
         return "vanilla"
+
     if "neoforge" in low:
         return "neoforge"
-    if "forge" in low or "fmlloader" in low:
+    if "fmlloader" in low or "cpw.mods" in low or "--launchtarget forge" in low:
+        return "forge"
+    # Unscharfes Substring-Suchwort: nur werten, wenn ein Forge-typisches
+    # Pfadmuster es begleitet — sonst trifft es z.B. ein Modnamen.
+    if "forge" in low and ("forge" in os.path.basename(_last_path_token(low))
+                           or "forge" in low.split()):
         return "forge"
     return "vanilla"
+
+
+def _last_path_token(low_cmd):
+    """Letztes Pfadsegment der Kommandozeile (für forge-Verzeichnis-Prüfung)."""
+    tokens = [t for t in re.split(r"[\s;]+", low_cmd) if t]
+    return tokens[-1] if tokens else ""
 
 
 def _detect_flavor_for_version(version):
@@ -964,7 +1282,43 @@ def module_is_loaded(proc_handle, dll_basename):
     return False
 
 
-def inject(dll_path, pid=None, version=None):
+def _preflight_dll(dll_path):
+    """Prüft die DLL vor der Injection, BEVOR irgendein Code ausgeführt wird.
+
+    Eine defekte oder falsch gebaute DLL crasht den Spiel-Prozess sofort und
+    hart (EXCEPTION_ACCESS_VIOLATION im JNI-Code) — das ist nicht
+    abfangbar. Diese Prüfungen kosten nichts und fangen die häufigsten
+    Ursachen ab, bevor der Process-Speicher überhaupt angefasst wird.
+    """
+    size = os.path.getsize(dll_path)
+    if size < 1000:
+        raise RuntimeError(
+            f"DLL verdächtig klein ({size} Bytes) — vermutlich ein abgebrochener "
+            f"oder fehlgeschlagener Build: {dll_path}")
+    with open(dll_path, "rb") as fp:
+        if fp.read(2) != b"MZ":
+            raise RuntimeError(
+                f"Keine gültige Windows-DLL (kein MZ-Header): {dll_path} — "
+                "existiert build/vanilla/Release/?")
+        # PE-Header prüfen: 'PE\0\0' muss an Offset e_lfanew stehen.
+        fp.seek(0x3C)
+        e_lfanew = struct.unpack("<I", fp.read(4))[0]
+        fp.seek(e_lfanew)
+        if fp.read(4) != b"PE\0\0":
+            raise RuntimeError(f"PE-Signatur fehlt — Datei ist keine DLL: {dll_path}")
+        fp.seek(e_lfanew + 4)
+        machine = struct.unpack("<H", fp.read(2))[0]
+        if machine == 0x014C:  # IMAGE_FILE_MACHINE_I386
+            raise RuntimeError(
+                "DLL ist 32-Bit, Minecraft ist 64-Bit — die Injection würde "
+                "Minecraft sofort crashen. Mit x64-Build-Tools neu bauen.")
+        if machine != 0x8664:  # IMAGE_FILE_MACHINE_AMD64
+            raise RuntimeError(
+                f"Unerwartete Maschinen-Architektur 0x{machine:04X} in {dll_path} "
+                "(erwartet AMD64).")
+
+
+def inject(dll_path, pid=None, version=None, flavor=None):
     if struct.calcsize("P") != 8:
         raise RuntimeError("64-bit Python erforderlich (javaw.exe ist 64-bit).")
     if pid is None:
@@ -972,20 +1326,37 @@ def inject(dll_path, pid=None, version=None):
         if not pids:
             raise RuntimeError("Kein javaw.exe-Prozess gefunden.")
         if len(pids) > 1:
-            # Bei mehreren javaw-Prozessen den zur erkannten Version passenden wählen
+            # Bei mehreren javaw-Prozessen den zur erkannten Version UND
+            # zum gewählten Flavor passenden wählen. Nur die Version zu
+            # vergleichen reicht nicht: ein Vanilla- und ein Forge-Client
+            # derselben Version dürfen nicht verwechselt werden.
+            scored = []
             for p in pids:
                 cmd = read_cmdline(p)
-                if cmd and version and version in cmd:
-                    pid = p
-                    break
-            if pid is None:
-                print(f"[!] Mehrere javaw.exe-Prozesse — verwende PID {pids[0]} "
-                      "(--pid zum Auswählen)")
+                if not cmd:
+                    continue
+                score = 0
+                if version and version in cmd:
+                    score += 2
+                if flavor and _profile_flavor(cmd) == flavor:
+                    score += 1
+                scored.append((score, p))
+            if scored:
+                best = max(s[0] for s in scored)
+                if best > 0:
+                    pid = sorted(p for s, p in scored if s == best)[0]
+                else:
+                    pid = pids[0]
+            if len(pids) > 1 and flavor and _profile_flavor(read_cmdline(pid) or "") != flavor:
+                print(f"[!] Achtung: gewählter Flavor ist '{flavor}', aber PID {pid} "
+                      f"läuft als '{_profile_flavor(read_cmdline(pid) or '')}'. "
+                      "Falsche Zuordnung kann Minecraft crashen.")
         if pid is None:
             pid = pids[0]
     dll_path = os.path.abspath(dll_path)
     if not os.path.exists(dll_path):
         raise RuntimeError("DLL nicht gefunden: " + dll_path)
+    _preflight_dll(dll_path)
 
     kernel32, _ = _setup_winapi()
     PROCESS_ALL_ACCESS = 0x1F0FFF
@@ -1069,7 +1440,10 @@ def main():
         epilog=__doc__)
     ap.add_argument("--version", help="Minecraft-Version (Default: automatisch)")
     ap.add_argument("--forge", action="store_true",
-                    help="Forge/NeoForge-Instanz: offizielle Namen, keine Obfuskation")
+                    help="Forge-Instanz (Kurzform für --flavor forge)")
+    ap.add_argument("--flavor", choices=list(FLAVORS),
+                    help="Instanz-Typ: vanilla, fabric, forge, neoforge "
+                         "(Default: automatisch aus der Kommandozeile)")
     ap.add_argument("--mappings-file", help="Lokale client.txt statt Download")
     ap.add_argument("--translate-only", action="store_true",
                     help="Nur übersetzen (Kopie nach build/vanilla_src)")
@@ -1085,14 +1459,26 @@ def main():
     args = ap.parse_args()
 
     if args.inject_only:
-        inject(args.dll or os.path.join(BUILD_DIR, "Release", "draxo.dll"),
-               pid=args.pid)
+        default_dll = os.path.join(BUILD_DIR, "vanilla", "Release", "draxo.dll")
+        inject(args.dll or default_dll, pid=args.pid,
+               flavor=args.flavor or ("forge" if args.forge else None))
         return
 
-    # 1) Version + Instanz-Typ (vanilla / forge / neoforge)
+    # 1) Version + Instanz-Typ (vanilla / fabric / forge / neoforge)
+    #    Explizite Angabe hat IMMER Vorrang vor der Auto-Erkennung — sonst
+    #    überschreibt ein gerade laufender Prozess die getroffene Wahl.
     version = args.version
-    if args.forge:
-        flavor = "forge"
+    explicit_flavor = args.flavor
+    if args.forge and not explicit_flavor:
+        explicit_flavor = "forge"
+
+    if explicit_flavor:
+        flavor = explicit_flavor
+        if not version:
+            version, detected = detect_profile()
+            if detected != flavor:
+                print(f"[!] Gewählter Flavor '{flavor}' weicht vom erkannten "
+                      f"'{detected}' ab — es wird {flavor} verwendet.")
     elif version:
         flavor = _detect_flavor_for_version(version)
     elif not args.mappings_file:
@@ -1103,26 +1489,60 @@ def main():
         # Versuch, Version aus dem Dateinamen zu raten
         m = re.search(r"(\d+\.\d+(?:\.\d+)?)", os.path.basename(args.mappings_file))
         version = m.group(1) if m else "?"
-    suffix = f" ({flavor})" if flavor != "vanilla" else ""
+    suffix = "" if flavor == "vanilla" else f" ({flavor})"
     print(f"[*] Zielversion: {version}{suffix}")
 
     # 1b) Vorgefertigte DLL? → direkt injizieren, kein Build nötig
     if not (args.translate_only or args.dump_map or args.build_only or args.force_build):
-        prebuilt = find_prebuilt_dll(version, forge=(flavor != "vanilla"))
+        prebuilt = find_prebuilt_dll(version, flavor=flavor)
         if prebuilt:
             print(f"[+] Vorgefertigte DLL gefunden: {prebuilt}")
             print("    Überspringe Build (keine Toolchain nötig).")
             try:
-                inject(prebuilt, pid=args.pid, version=version)
+                inject(prebuilt, pid=args.pid, version=version, flavor=flavor)
             except RuntimeError as e:
                 print(f"[!] Injection übersprungen: {e}")
                 print(f"    DLL liegt unter: {prebuilt}")
             return
+        # Keine DLL für genau diesen Flavor. Besonders wichtig bei Fabric:
+        # die gibt es bisher nicht, und eine falsche zu injizieren crasht
+        # das Spiel. Deshalb hier bewusst KEIN Fallback auf einen anderen
+        # Flavor — stattdessen den Build anstoßen oder klar abbrechen.
+        available = list_prebuilt_flavors(version)
+        if available:
+            print(f"[i] Für {version} ist nur {', '.join(available)} vorgefertigt, "
+                  f"nicht '{flavor}'.")
+        if flavor == "fabric" and "vanilla" in available:
+            print("[!] ACHTUNG: Vanilla-DLL passt NICHT zu Fabric.")
+            print("    Fabric nutzt Intermediary-Namen (class_2248). Eine hier "
+                  "injizierte Vanilla-DLL crasht Minecraft sofort mit "
+                  "NoSuchFieldError. Bau stattdessen die Fabric-DLL.")
 
     # 2) Mappings
-    forge_modern = flavor != "vanilla" and _ver_at_least(version, "1.17")
+    #    Drei verschiedene Namenswelten je nach Flavor:
+    #      vanilla 1.17-1.21.x  -> volle Mojang-Obfuskation (bbi -> Mojang)
+    #      vanilla 26.x         -> offizielle Namen (nicht obfuskiert)
+    #      forge/neoforge 1.17+ -> offizielle Namen == mappings.h
+    #      fabric 1.17-1.21.x   -> Intermediary (class_2248)
+    forge_modern = flavor in ("forge", "neoforge") and _ver_at_least(version, "1.17")
     if args.mappings_file:
         mapping_path = args.mappings_file
+    elif needs_intermediary(flavor):
+        # Fabric: Intermediary-Mappings als JAR holen. Für die Verkettung
+        # offiziell -> obf -> intermediary werden ZUSÄTZLICH die Mojang-
+        # Mappings gebraucht.
+        jar = download_intermediary(version)
+        if jar is None:
+            mapping_path = None
+        else:
+            mojang_path = download_client_mappings(version)
+            if mojang_path:
+                moj_c, moj_m, moj_f = parse_mappings(mojang_path)
+            else:
+                moj_c, moj_m, moj_f = {}, {}, {}
+            class_map, methods, fields = parse_intermediary(
+                jar, moj_c, moj_m, moj_f)
+            mapping_path = "intermediary"
     elif forge_modern:
         # Forge/NeoForge 1.17+: Laufzeit nutzt OFFIZIELLE Namen — genau die
         # Namen in mappings.h. Keine Obfuskation, kein Mappings-Download.
@@ -1136,13 +1556,22 @@ def main():
         sys.exit(1)
     else:
         mapping_path = download_client_mappings(version)
-    if mapping_path:
+    if args.mappings_file:
         class_map, methods, fields = parse_mappings(mapping_path)
         print(f"[*] Mappings geladen: {len(class_map)} Klassen")
-    else:
+    elif mapping_path == "intermediary":
+        pass  # class_map/methods/fields wurden bereits von parse_intermediary gesetzt
+    elif mapping_path is None and needs_intermediary(flavor):
+        class_map, methods, fields = {}, {}, {}
+        print("[*] Fabric ohne Obfuskation — offizielle Namen gelten.")
+    elif mapping_path is None:
         class_map, methods, fields = {}, {}, {}
         print("[*] Version nicht obfuskiert — Mappings bleiben unverändert "
               "(lesbare Namen == Laufzeitnamen).")
+    else:
+        # Vanilla: offizielle Mojang-Mappings -> Obfuskation
+        class_map, methods, fields = parse_mappings(mapping_path)
+        print(f"[*] Mappings geladen: {len(class_map)} Klassen")
     # Für Pre-1.14 Versionen (1.12.2 etc.): MCP-Mappings statt Mojang-Namen
     source_mappings = MAPPINGS_H
     # Nur echte Pre-1.14-Versionen (1.12.2, 1.8.9 etc.) bekommen MCP-Mappings.
@@ -1189,12 +1618,12 @@ def main():
         return
 
     # 4) Build
-    dll = build(version)
+    dll = build(version, flavor=flavor)
 
     # 5) Injection (nur wenn Minecraft läuft)
     if not args.build_only:
         try:
-            inject(dll, pid=args.pid)
+            inject(dll, pid=args.pid, version=version, flavor=flavor)
         except RuntimeError as e:
             print(f"[!] Injection übersprungen: {e}")
             print(f"    DLL liegt unter: {dll}")

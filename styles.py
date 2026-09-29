@@ -88,6 +88,7 @@ FONTS = Fonts()
 LAYOUT = Layout()
 
 MINECRAFT_VERSIONS: list[str] = [
+    "26.3",
     "26.2",
     "26.1.2",
     "26.1.1",

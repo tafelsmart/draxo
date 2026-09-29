@@ -30,6 +30,24 @@ import sys
 from pathlib import Path
 from typing import Callable, Optional
 
+try:
+    from utils import get_workdir
+except Exception:  # pragma: no cover - standalone
+    def get_workdir() -> Path:
+        return Path(sys.executable).resolve().parent if getattr(
+            sys, "frozen", False) else Path(__file__).resolve().parent
+
+
+# DLL-Dateiname je Flavor. Muss mit FLAVOR_DLL in tools/vanilla_builder.py
+# übereinstimmen — die Zuordnung entscheidet, ob die zum Spiel passende
+# Namensauflösung (obfuskiert / intermediary / offiziell) geladen wird.
+_FLAVOR_DLL = {
+    "vanilla": "draxo.dll",
+    "fabric": "draxo_fabric.dll",
+    "forge": "draxo_forge.dll",
+    "neoforge": "draxo_forge.dll",
+}
+
 
 def _load_builder(workdir: Path):
     """Lädt den Builder — als MODUL (frozen) oder von Disk (dev)."""
@@ -125,7 +143,8 @@ def _is_bundle_path(path: str) -> bool:
         return False
 
 
-def _extract_prebuilt(workdir: Path, version: str, forge: bool) -> Optional[str]:
+def _extract_prebuilt(workdir: Path, version: str, forge: bool,
+                      flavor: Optional[str] = None) -> Optional[str]:
     """Entpackt eine vorgefertigte DLL aus dem Bundle in den stabilen Ordner.
 
     Rückgabe: Pfad zur entpackten DLL oder None, wenn keine im Bundle liegt.
@@ -133,7 +152,9 @@ def _extract_prebuilt(workdir: Path, version: str, forge: bool) -> Optional[str]
     bundle = getattr(sys, "_MEIPASS", None)
     if not bundle:
         return None
-    name = "draxo_forge.dll" if forge else "draxo.dll"
+    if flavor is None:
+        flavor = "forge" if forge else "vanilla"
+    name = _FLAVOR_DLL.get(flavor, "draxo.dll")
     src = Path(bundle) / "prebuilt" / version / name
     if not src.exists():
         return None
@@ -172,16 +193,42 @@ def _ensure_build_chain(workdir: Path) -> None:
             shutil.copy2(src, dst)
 
 
+def prebuilt_available(version: str, flavor: str) -> tuple[bool, str]:
+    """Gibt es für Version+Flavor eine einsatzbereite DLL?
+
+    Liefert (verfügbar, hinweis). Der Hinweis erklärt, was beim Build
+    passiert — die UI zeigt ihn an, damit klar ist, warum eine Auswahl
+    noch keinen Inject ermöglicht.
+    """
+    if not version or version == "?":
+        return False, "Keine Version gewählt."
+    label = {"vanilla": "Vanilla", "fabric": "Fabric",
+             "forge": "Forge", "neoforge": "NeoForge"}.get(flavor, flavor)
+    try:
+        mod = _load_builder(get_workdir())
+        path = mod.find_prebuilt_dll(version, flavor=flavor)
+    except Exception:  # noqa: BLE001
+        # Builder nicht ladbar (z.B. im eingebetteten Bundle) — nicht
+        # spekulieren, nur den neutralen Hinweis geben.
+        return False, f"{version} · {label}: keine vorgefertigte DLL (wird gebaut)"
+    if path:
+        return True, f"●  {version} · {label} — bereit"
+    return False, (
+        f"{version} · {label}: keine vorgefertigte DLL — "
+        "wird beim Inject aus dem Quellcode gebaut")
+
+
 def run_build(
     version: str,
     workdir: Path,
     output: Optional[Callable[[str, str], None]] = None,
     forge: bool = False,
+    flavor: Optional[str] = None,
 ) -> tuple[int, Optional[str]]:
-    """Führt den kompletten Build+Inject für die Version aus.
+    """Führt den kompletten Build+Inject für Version+Flavor aus.
 
-    forge=True: Forge/NeoForge-Instanz (1.17+) — offizielle Namen,
-    also ohne Obfuskation bauen.
+    flavor: "vanilla" | "fabric" | "forge" | "neoforge"
+    ``forge`` bleibt als Rückwärtskompatibilität (impliziert flavor="forge").
 
     Reihenfolge:
       1. Vorgefertigte DLL (stabiler Ordner ODER Bundle)? → direkt injizieren
@@ -189,6 +236,9 @@ def run_build(
 
     Rückgabe: (exit_code, error_message_or_None)
     """
+    if flavor is None:
+        flavor = "forge" if forge else "vanilla"
+    flavor = flavor.lower()
     callback = output or (lambda line, typ: None)
     old_stdout, old_stderr = sys.stdout, sys.stderr
     old_argv = sys.argv
@@ -198,35 +248,39 @@ def run_build(
         sys.stdout = _Sink(callback, "stdout")  # type: ignore[assignment]
         sys.stderr = _Sink(callback, "stderr")  # type: ignore[assignment]
         sys.argv = ["vanilla_builder", "--version", version]
-        if forge:
-            sys.argv.append("--forge")
+        if flavor and flavor != "vanilla":
+            sys.argv += ["--flavor", flavor]
 
         # ── 1) Vorgefertigte DLL? ────────────────────────────────────
         #    a) stabiler Ordner neben der .exe (z. B. aus früherem Inject)
-        prebuilt = mod.find_prebuilt_dll(version, forge=forge)
+        prebuilt = mod.find_prebuilt_dll(version, flavor=flavor)
         if prebuilt and not _is_bundle_path(prebuilt):
-            print(f"[+] Vorgefertigte DLL gefunden: {prebuilt}")
+            print(f"[+] Vorgefertigte DLL gefunden ({flavor}): {prebuilt}")
             print("    Kein Build nötig — injiziere direkt.")
             try:
-                mod.inject(prebuilt, version=version)
+                mod.inject(prebuilt, version=version, flavor=flavor)
             except RuntimeError as exc:
                 print(f"[!] Injection übersprungen: {exc}")
+                return 1, str(exc)
             return 0, None
 
         #    b) Bundle (_MEIPASS) → in stabilen Ordner entpacken + injizieren
         #       (NIE direkt aus _MEIPASS injizieren — Config/Key ginge verloren)
-        extracted = _extract_prebuilt(workdir, version, forge)
+        extracted = _extract_prebuilt(workdir, version, forge, flavor=flavor)
         if extracted:
             print(f"[+] Vorgefertigte DLL aus Bundle entpackt: {extracted}")
             print("    Kein Build nötig — injiziere direkt.")
             try:
-                mod.inject(extracted, version=version)
+                mod.inject(extracted, version=version, flavor=flavor)
             except RuntimeError as exc:
                 print(f"[!] Injection übersprungen: {exc}")
+                return 1, str(exc)
             return 0, None
 
         # ── 2) Keine vorgefertigte DLL → Toolchain-Build ────────────
         #    Im Frozen-Standalone zuerst die eingebettete Quelle entpacken
+        print(f"[*] Keine vorgefertigte DLL für {version} ({flavor}) — "
+              "starte Build aus dem Quellcode.")
         _ensure_build_chain(workdir)
         if not _toolchain_ok(mod):
             print("[!] Keine vorgefertigte DLL für diese Version im Bundle.")

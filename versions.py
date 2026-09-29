@@ -28,6 +28,7 @@ USER_AGENT = {"User-Agent": "draxo-launcher/1.0"}
 # Statische Fallback-Liste (neueste zuerst). Deckt 1.17 … 26.2 ab.
 # Diese Liste wird NUR verwendet, wenn der Live-Abruf fehlschlägt.
 STATIC_VERSIONS: list[str] = [
+    "26.3",
     "26.2",
     "26.1.2",
     "26.1.1",

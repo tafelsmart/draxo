@@ -66,6 +66,21 @@ class MinecraftStatus:
 
 
 @dataclass
+class MinecraftInstance:
+    """Eine konkret erkannte Minecraft-Instanz (Version + Flavor + PID)."""
+
+    version: Optional[str]
+    flavor: str
+    pid: Optional[int] = None
+    process_name: Optional[str] = None
+
+    @property
+    def label(self) -> str:
+        flavor = FLAVOR_LABELS.get(self.flavor, self.flavor)
+        return f"{self.version or '?'} · {flavor}"
+
+
+@dataclass
 class SystemUsage:
     """Ergebnis einer System-Auslastungsmessung."""
 
@@ -76,16 +91,38 @@ class SystemUsage:
 def _cmdline_flavor(cmdline: list[str]) -> str:
     """Erkennt den Instanz-Typ aus einer Kommandozeile.
 
-    Forge/NeoForge 1.17+ laufen zur Laufzeit mit OFFIZIELLEN Mojang-Namen
-    (nicht obfuskiert) — die DLL muss dafür OHNE Übersetzung gebaut werden.
-    Rückgabe: "vanilla" | "forge" | "neoforge"
+    Reihenfolge ist entscheidend — siehe Kommentar zu den Fallstricken.
+    Rückgabe: "vanilla" | "fabric" | "forge" | "neoforge"
     """
     joined = " ".join(cmdline).lower()
+    if not joined:
+        return "vanilla"
+
+    # Fabric Loader: eindeutige Marker. MUSS vor der Forge-Prüfung stehen,
+    # weil eine Fabric-Instanz Mods laden kann, deren Name "forge" enthält.
+    if "fabric-loader" in joined or "net.fabricmc" in joined or "fabric.gameVersion" in joined:
+        return "fabric"
+
+    # Labymod 4 startet Minecraft selbst; forge-Verzeichnisse im Classpath
+    # sind nur Addon-Stubs und kein Forge-Indikator.
+    if "net.labymod" in joined or "labymod" in joined:
+        return "vanilla"
+
     if "neoforge" in joined:
         return "neoforge"
-    if "forge" in joined or "fmlloader" in joined:
+    if "fmlloader" in joined or "cpw.mods" in joined:
+        return "forge"
+    if "forge" in joined:
         return "forge"
     return "vanilla"
+
+
+FLAVOR_LABELS = {
+    "vanilla": "Vanilla",
+    "fabric": "Fabric",
+    "forge": "Forge",
+    "neoforge": "NeoForge",
+}
 
 
 class ProcessDetector:
@@ -152,9 +189,10 @@ class ProcessDetector:
 
     @staticmethod
     def detect_minecraft_version(known_versions: Optional[list[str]] = None) -> Optional[str]:
-        """Ermittelt die Version der laufenden Minecraft-Instanz aus der
+        """
+        Ermittelt die Version der laufenden Minecraft-Instanz aus der
         Prozess-Kommandozeile (--version <id>, versions/<id>/ Pfad oder
-        Klassenpfad — z. B. Forge 'fmlloader-1.20.1-47.4.20.jar').
+        Klassenpfad — z.B. Forge 'fmlloader-1.20.1-47.4.20.jar').
 
         Es werden NUR Versionen akzeptiert, die in der bekannten Liste
         stehen (oder eine saubere eigenständige Versions-ID sind), damit
@@ -163,6 +201,44 @@ class ProcessDetector:
         """
         version, _flavor = ProcessDetector.detect_minecraft_profile(known_versions)
         return version
+
+    @staticmethod
+    def list_instances(known_versions: Optional[list[str]] = None) -> list["MinecraftInstance"]:
+        """Alle laufenden Minecraft-Instanzen mit Version und Flavor.
+
+        Wird von der Auswahl im Launcher verwendet, damit der User bei
+        mehreren gleichzeitig laufenden Instanzen gezielt wählen kann
+        (z.B. Vanilla 1.21.4 UND Fabric 1.21.4 offen).
+        """
+        known = known_versions or []
+        instances: list[MinecraftInstance] = []
+        try:
+            for process in psutil.process_iter(attrs=["pid", "name"]):
+                try:
+                    name = (process.info.get("name") or "").lower()
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
+                if name not in MINECRAFT_PROCESS_NAMES:
+                    continue
+                try:
+                    cmdline = process.cmdline() or []
+                except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                    continue
+
+                # _version_from_cmdline liefert nur die Versions-ID (kein
+                # Tupel) — der Flavor kommt separat aus der Kommandozeile.
+                version = ProcessDetector._version_from_cmdline(cmdline, known)
+                if not version:
+                    continue
+                instances.append(MinecraftInstance(
+                    pid=process.info.get("pid"),
+                    version=version,
+                    flavor=_cmdline_flavor(cmdline),
+                    process_name=process.info.get("name"),
+                ))
+        except Exception:  # noqa: BLE001
+            logger.exception("Fehler beim Auflisten der Minecraft-Instanzen.")
+        return instances
 
     @staticmethod
     def _version_from_cmdline(cmdline: list[str], known: list[str]) -> Optional[str]:
