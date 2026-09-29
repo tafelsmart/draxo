@@ -1,200 +1,268 @@
 {
-    "version": "1.1.0",
-    "tag_name": "v1.1.0",
-    "download_url": "https://draxo.netlify.app/DraxoLauncher.exe",
-    "mirrors": [],
-    "notes": "Draxo Client v1.1.0 — Launcher-Update mit Auto-Updater (GitHub Releases + Netlify-Fallback), Stream-Clean-Modus, Lizenz-Gate im Launcher und Multi-Mirror-Download-System.",
-    "changelog": [
-        {
-            "version": "1.1.0",
-            "date": "2026-08-06",
-            "tag": "latest",
-            "title": {
-                "en": "Launcher v2 — Auto-Updater, Stream Clean & License Gate",
-                "de": "Launcher v2 — Auto-Updater, Stream Clean & Lizenz-Gate",
-                "es": "Launcher v2 — Auto-Updater, Stream Clean y puerta de licencia",
-                "fr": "Launcher v2 — Auto-updater, Stream Clean et portail de licence"
-            },
-            "highlights": ["Auto-Updater", "Stream Clean", "License Gate"],
-            "notes": [
-                "Auto-Updater: checkt GitHub Releases zuerst (kostenlos, unbegrenztes Bandwidth), Netlify als Fallback",
-                "Multi-Mirror-Download: der Updater probiert alle Download-Quellen nacheinander durch",
-                "Stream Clean: Overlay in separatem transparentem Fenster — Discord/OBS-Stream zeigt nur sauberes Minecraft",
-                "Lizenz-Gate: INJECT-Button ist ohne gültigen Key gesperrt (LICENSE REQUIRED / KEY EXPIRED)",
-                "Key-Eingabe direkt im Launcher mit Activate-Button und sofortiger Validierung"
-            ]
-        },
-        {
-            "version": "1.0.0",
-            "date": "2026-08-06",
-            "tag": "latest",
-            "title": {
-                "en": "Netlify Release & Multilingual Website",
-                "de": "Netlify-Release & mehrsprachige Website",
-                "es": "Lanzamiento en Netlify y web multilingüe",
-                "fr": "Sortie Netlify et site multilingue"
-            },
-            "highlights": ["Netlify", "i18n EN/DE/ES/FR", "Auto-Updater"],
-            "notes": [
-                "Complete multilingual website with automatic country detection (EN, DE, ES, FR)",
-                "Launcher auto-updater now pulls releases from draxo.netlify.app",
-                "License keygen with enforced Linkvertise ads and one-time checkpoint tokens",
-                "Launcher shows live license status (ACTIVE / EXPIRED / LOCKED) with HWID copy & get-key buttons"
-            ]
-        },
-        {
-            "version": "0.9.0",
-            "date": "2026-07-28",
-            "title": {
-                "en": "Anti-Cheat Engine Hardening",
-                "de": "Anti-Cheat-Engine gehärtet",
-                "es": "Refuerzo del motor anti-cheat",
-                "fr": "Renforcement du moteur anti-cheat"
-            },
-            "highlights": ["Watchdog Bypass", "Integrity", "Anti-Debug"],
-            "notes": [
-                "Global PacketScheduler with randomized delays between attack packets",
-                "Perlin / sine-wave jitter rotations instead of linear aim",
-                "DLL integrity check (CRC32) with magic-sentinel patching",
-                "Anti-debug: IsDebuggerPresent, NtQueryInformationProcess, CheckRemoteDebuggerPresent",
-                "String encryption for all module names and JNI lookups"
-            ]
-        },
-        {
-            "version": "0.8.0",
-            "date": "2026-07-21",
-            "title": {
-                "en": "Interface Modes & Presets",
-                "de": "Interface-Modi & Presets",
-                "es": "Modos de interfaz y presets",
-                "fr": "Modes d'interface et presets"
-            },
-            "highlights": ["Simple/Advanced", "Presets", "Search"],
-            "notes": [
-                "New Simple/Advanced interface mode for every module",
-                "Legit/Rage presets with detection warnings shown on the module card",
-                "Custom presets with save / load / reset per module",
-                "Module search, collapsible setting categories and tooltips for every option",
-                "Welcome dialog on first run + Ctrl+S quick save"
-            ]
-        },
-        {
-            "version": "0.7.0",
-            "date": "2026-07-14",
-            "title": {
-                "en": "Premium HUD Redesign & Font Engine",
-                "de": "Premium-HUD-Redesign & Font-Engine",
-                "es": "Rediseño premium del HUD y motor de fuentes",
-                "fr": "Refonte premium du HUD et moteur de polices"
-            },
-            "highlights": ["HUD Editor", "Fonts", "Themes"],
-            "notes": [
-                "Complete HUD redesign with grouped, aligned elements (8-12px spacing)",
-                "HUD editor with snap-lines, grid and per-element customization",
-                "Font engine with Inter and JetBrains Mono (12-28px size slider)",
-                "Animated notifications stacking from the bottom-left"
-            ]
-        },
-        {
-            "version": "0.6.0",
-            "date": "2026-07-07",
-            "title": {
-                "en": "Config System 2.0",
-                "de": "Config-System 2.0",
-                "es": "Sistema de configs 2.0",
-                "fr": "Système de configs 2.0"
-            },
-            "highlights": ["Named Configs", "Server Auto-Load", "Favorites"],
-            "notes": [
-                "Named config profiles with save / load / auto-load",
-                "Per-server auto-load (e.g. cfg_minemen.ini on Minemen.club)",
-                "Module favorites and per-module hotkeys stored in the config",
-                "License key section inside the config"
-            ]
-        },
-        {
-            "version": "0.5.0",
-            "date": "2026-06-30",
-            "title": {
-                "en": "Combat Overhaul",
-                "de": "Combat-Überarbeitung",
-                "es": "Reforma del combate",
-                "fr": "Refonte du combat"
-            },
-            "highlights": ["KillAura", "Velocity", "AimAssist"],
-            "notes": [
-                "KillAura with 1.8 and 1.18 PvP modes (cooldown-aware damage)",
-                "Combo mode: launch enemies upward for maximum knockback",
-                "Reworked Anti-Knockback with horizontal/vertical sliders",
-                "AimAssist with smoothness sliders and always-on option (max 5 blocks)",
-                "Optional TriggerBot with 1.8 / 1.18 timing"
-            ]
-        },
-        {
-            "version": "0.4.0",
-            "date": "2026-06-22",
-            "title": {
-                "en": "Scaffold Overhaul",
-                "de": "Scaffold-Überarbeitung",
-                "es": "Reforma de Scaffold",
-                "fr": "Refonte de Scaffold"
-            },
-            "highlights": ["Legit", "Semi", "Rage", "Tower"],
-            "notes": [
-                "Three bridge modes: Legit (sneak), Semi and Rage (auto-place)",
-                "GodBridge, Breezily and Eagle bridging styles",
-                "Tower mode: jump and place blocks beneath you",
-                "InventoryMove: auto-refills the hotbar from the inventory via container clicks"
-            ]
-        },
-        {
-            "version": "0.3.0",
-            "date": "2026-06-14",
-            "title": {
-                "en": "Movement & Visuals",
-                "de": "Movement & Visuals",
-                "es": "Movimiento y visuales",
-                "fr": "Mouvement et visuels"
-            },
-            "highlights": ["Speed", "Fly", "ESP", "Tracers"],
-            "notes": [
-                "Speed with BHop, Strafe and Y-Port modes",
-                "Fly with Vanilla, Packet and Motion modes",
-                "Rewritten ESP and Tracers with a full render pipeline",
-                "Nuker fixed and expanded with a customizable radius"
-            ]
-        },
-        {
-            "version": "0.2.0",
-            "date": "2026-06-05",
-            "title": {
-                "en": "Multi-Version Support",
-                "de": "Multi-Version-Support",
-                "es": "Soporte multiversión",
-                "fr": "Support multiversion"
-            },
-            "highlights": ["1.17 - 26.x", "Auto-Mappings"],
-            "notes": [
-                "Support for every Minecraft version from 1.17 to 26.x",
-                "Automatic mapping generation and caching per version",
-                "Launcher version picker with 33 versions"
-            ]
-        },
-        {
-            "version": "0.1.0",
-            "date": "2026-05-28",
-            "title": {
-                "en": "Initial Release",
-                "de": "Erstveröffentlichung",
-                "es": "Lanzamiento inicial",
-                "fr": "Première version"
-            },
-            "highlights": ["Framework", "Injection", "Menu"],
-            "notes": [
-                "Injection framework with MinHook and JVM wrapper",
-                "ImGui-based ClickGUI with theme engine",
-                "Core modules: KillAura, Reach, ESP, Scaffold, Speed, Fly"
-            ]
-        }
-    ]
+  "version": "1.2.0",
+  "tag_name": "v1.2.0",
+  "download_url": "https://github.com/tafelsmart/draxo/releases/download/v1.2.0/DraxoLauncher.exe",
+  "mirrors": [],
+  "notes": "Draxo Client v1.2.0 — Fabric-Support, stabile Injektion (Preflight, korrekte DLL je Flavor), Minecraft 26.3, Auto-Updater zeigt auf das richtige GitHub-Repo.",
+  "changelog": [
+    {
+      "version": "1.2.0",
+      "date": "2026-09-29",
+      "tag": "latest",
+      "title": {
+        "en": "Fabric Support & Stable Injection",
+        "de": "Fabric-Support & stabile Injektion",
+        "es": "Soporte de Fabric e inyección estable",
+        "fr": "Support de Fabric et injection stable"
+      },
+      "highlights": [
+        "Fabric",
+        "26.3",
+        "Stabiler Inject"
+      ],
+      "notes": [
+        "Fabric wird jetzt korrekt erkannt und bekommt die passende DLL (Intermediary-Mappings)",
+        "Minecraft 26.3 fuer Vanilla, Fabric, Forge und NeoForge",
+        "Version und Flavor im Launcher auswaehlbar",
+        "Preflight prueft DLL-Architektur vor der Injection",
+        "Auto-Updater zeigt auf das richtige GitHub-Repository"
+      ]
+    },
+    {
+      "version": "1.1.0",
+      "date": "2026-08-06",
+      "tag": "latest",
+      "title": {
+        "en": "Launcher v2 — Auto-Updater, Stream Clean & License Gate",
+        "de": "Launcher v2 — Auto-Updater, Stream Clean & Lizenz-Gate",
+        "es": "Launcher v2 — Auto-Updater, Stream Clean y puerta de licencia",
+        "fr": "Launcher v2 — Auto-updater, Stream Clean et portail de licence"
+      },
+      "highlights": [
+        "Auto-Updater",
+        "Stream Clean",
+        "License Gate"
+      ],
+      "notes": [
+        "Auto-Updater: checkt GitHub Releases zuerst (kostenlos, unbegrenztes Bandwidth), Netlify als Fallback",
+        "Multi-Mirror-Download: der Updater probiert alle Download-Quellen nacheinander durch",
+        "Stream Clean: Overlay in separatem transparentem Fenster — Discord/OBS-Stream zeigt nur sauberes Minecraft",
+        "Lizenz-Gate: INJECT-Button ist ohne gültigen Key gesperrt (LICENSE REQUIRED / KEY EXPIRED)",
+        "Key-Eingabe direkt im Launcher mit Activate-Button und sofortiger Validierung"
+      ]
+    },
+    {
+      "version": "1.0.0",
+      "date": "2026-08-06",
+      "tag": "latest",
+      "title": {
+        "en": "Netlify Release & Multilingual Website",
+        "de": "Netlify-Release & mehrsprachige Website",
+        "es": "Lanzamiento en Netlify y web multilingüe",
+        "fr": "Sortie Netlify et site multilingue"
+      },
+      "highlights": [
+        "Netlify",
+        "i18n EN/DE/ES/FR",
+        "Auto-Updater"
+      ],
+      "notes": [
+        "Complete multilingual website with automatic country detection (EN, DE, ES, FR)",
+        "Launcher auto-updater now pulls releases from draxo.netlify.app",
+        "License keygen with enforced Linkvertise ads and one-time checkpoint tokens",
+        "Launcher shows live license status (ACTIVE / EXPIRED / LOCKED) with HWID copy & get-key buttons"
+      ]
+    },
+    {
+      "version": "0.9.0",
+      "date": "2026-07-28",
+      "title": {
+        "en": "Anti-Cheat Engine Hardening",
+        "de": "Anti-Cheat-Engine gehärtet",
+        "es": "Refuerzo del motor anti-cheat",
+        "fr": "Renforcement du moteur anti-cheat"
+      },
+      "highlights": [
+        "Watchdog Bypass",
+        "Integrity",
+        "Anti-Debug"
+      ],
+      "notes": [
+        "Global PacketScheduler with randomized delays between attack packets",
+        "Perlin / sine-wave jitter rotations instead of linear aim",
+        "DLL integrity check (CRC32) with magic-sentinel patching",
+        "Anti-debug: IsDebuggerPresent, NtQueryInformationProcess, CheckRemoteDebuggerPresent",
+        "String encryption for all module names and JNI lookups"
+      ]
+    },
+    {
+      "version": "0.8.0",
+      "date": "2026-07-21",
+      "title": {
+        "en": "Interface Modes & Presets",
+        "de": "Interface-Modi & Presets",
+        "es": "Modos de interfaz y presets",
+        "fr": "Modes d'interface et presets"
+      },
+      "highlights": [
+        "Simple/Advanced",
+        "Presets",
+        "Search"
+      ],
+      "notes": [
+        "New Simple/Advanced interface mode for every module",
+        "Legit/Rage presets with detection warnings shown on the module card",
+        "Custom presets with save / load / reset per module",
+        "Module search, collapsible setting categories and tooltips for every option",
+        "Welcome dialog on first run + Ctrl+S quick save"
+      ]
+    },
+    {
+      "version": "0.7.0",
+      "date": "2026-07-14",
+      "title": {
+        "en": "Premium HUD Redesign & Font Engine",
+        "de": "Premium-HUD-Redesign & Font-Engine",
+        "es": "Rediseño premium del HUD y motor de fuentes",
+        "fr": "Refonte premium du HUD et moteur de polices"
+      },
+      "highlights": [
+        "HUD Editor",
+        "Fonts",
+        "Themes"
+      ],
+      "notes": [
+        "Complete HUD redesign with grouped, aligned elements (8-12px spacing)",
+        "HUD editor with snap-lines, grid and per-element customization",
+        "Font engine with Inter and JetBrains Mono (12-28px size slider)",
+        "Animated notifications stacking from the bottom-left"
+      ]
+    },
+    {
+      "version": "0.6.0",
+      "date": "2026-07-07",
+      "title": {
+        "en": "Config System 2.0",
+        "de": "Config-System 2.0",
+        "es": "Sistema de configs 2.0",
+        "fr": "Système de configs 2.0"
+      },
+      "highlights": [
+        "Named Configs",
+        "Server Auto-Load",
+        "Favorites"
+      ],
+      "notes": [
+        "Named config profiles with save / load / auto-load",
+        "Per-server auto-load (e.g. cfg_minemen.ini on Minemen.club)",
+        "Module favorites and per-module hotkeys stored in the config",
+        "License key section inside the config"
+      ]
+    },
+    {
+      "version": "0.5.0",
+      "date": "2026-06-30",
+      "title": {
+        "en": "Combat Overhaul",
+        "de": "Combat-Überarbeitung",
+        "es": "Reforma del combate",
+        "fr": "Refonte du combat"
+      },
+      "highlights": [
+        "KillAura",
+        "Velocity",
+        "AimAssist"
+      ],
+      "notes": [
+        "KillAura with 1.8 and 1.18 PvP modes (cooldown-aware damage)",
+        "Combo mode: launch enemies upward for maximum knockback",
+        "Reworked Anti-Knockback with horizontal/vertical sliders",
+        "AimAssist with smoothness sliders and always-on option (max 5 blocks)",
+        "Optional TriggerBot with 1.8 / 1.18 timing"
+      ]
+    },
+    {
+      "version": "0.4.0",
+      "date": "2026-06-22",
+      "title": {
+        "en": "Scaffold Overhaul",
+        "de": "Scaffold-Überarbeitung",
+        "es": "Reforma de Scaffold",
+        "fr": "Refonte de Scaffold"
+      },
+      "highlights": [
+        "Legit",
+        "Semi",
+        "Rage",
+        "Tower"
+      ],
+      "notes": [
+        "Three bridge modes: Legit (sneak), Semi and Rage (auto-place)",
+        "GodBridge, Breezily and Eagle bridging styles",
+        "Tower mode: jump and place blocks beneath you",
+        "InventoryMove: auto-refills the hotbar from the inventory via container clicks"
+      ]
+    },
+    {
+      "version": "0.3.0",
+      "date": "2026-06-14",
+      "title": {
+        "en": "Movement & Visuals",
+        "de": "Movement & Visuals",
+        "es": "Movimiento y visuales",
+        "fr": "Mouvement et visuels"
+      },
+      "highlights": [
+        "Speed",
+        "Fly",
+        "ESP",
+        "Tracers"
+      ],
+      "notes": [
+        "Speed with BHop, Strafe and Y-Port modes",
+        "Fly with Vanilla, Packet and Motion modes",
+        "Rewritten ESP and Tracers with a full render pipeline",
+        "Nuker fixed and expanded with a customizable radius"
+      ]
+    },
+    {
+      "version": "0.2.0",
+      "date": "2026-06-05",
+      "title": {
+        "en": "Multi-Version Support",
+        "de": "Multi-Version-Support",
+        "es": "Soporte multiversión",
+        "fr": "Support multiversion"
+      },
+      "highlights": [
+        "1.17 - 26.x",
+        "Auto-Mappings"
+      ],
+      "notes": [
+        "Support for every Minecraft version from 1.17 to 26.x",
+        "Automatic mapping generation and caching per version",
+        "Launcher version picker with 33 versions"
+      ]
+    },
+    {
+      "version": "0.1.0",
+      "date": "2026-05-28",
+      "title": {
+        "en": "Initial Release",
+        "de": "Erstveröffentlichung",
+        "es": "Lanzamiento inicial",
+        "fr": "Première version"
+      },
+      "highlights": [
+        "Framework",
+        "Injection",
+        "Menu"
+      ],
+      "notes": [
+        "Injection framework with MinHook and JVM wrapper",
+        "ImGui-based ClickGUI with theme engine",
+        "Core modules: KillAura, Reach, ESP, Scaffold, Speed, Fly"
+      ]
+    }
+  ]
 }
