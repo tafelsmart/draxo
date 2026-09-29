@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -46,8 +47,54 @@ logger = logging.getLogger("DraxoClient.updater")
 # ── Konstanten ─────────────────────────────────────────────────────────────────
 # Primary: GitHub Releases API — FREE, unlimited bandwidth, no Netlify credits.
 # The updater natively parses the GitHub API format (tag_name, assets[], body).
-GITHUB_OWNER: str = "batotomato"
-GITHUB_REPO: str = "draxo"
+def _discover_github_repo() -> tuple[str, str]:
+    """Ermittle owner/repo fuer den Release-Check.
+
+    Reihenfolge:
+      1. Umgebungsvariablen DRAXO_GH_OWNER / DRAXO_GH_REPO (fuer Builds
+         in fremden Umgebungen)
+      2. Die Git-Remote "origin" — so folgt der Updater automatisch
+         einem umbenannten oder geforkten Repository, ohne dass hier
+         eine URL gepflegt werden muss.
+      3. Hartcodierter Fallback, falls kein .git vorhanden ist
+         (z.B. wenn nur die .exe weitergereicht wurde).
+    """
+    owner = os.environ.get("DRAXO_GH_OWNER", "").strip()
+    repo = os.environ.get("DRAXO_GH_REPO", "").strip()
+    if owner and repo:
+        return owner, repo
+
+    # Git-Remote auslesen (funktioniert auch ohne das git-Binary nicht —
+    # dann wird die .git/config direkt gelesen).
+    remote_url = ""
+    try:
+        git_dir = Path(__file__).resolve().parent / ".git"
+        cfg = git_dir / "config"
+        if cfg.is_file():
+            text = cfg.read_text(encoding="utf-8", errors="ignore")
+            in_origin = False
+            for line in text.splitlines():
+                stripped = line.strip()
+                if stripped.startswith("["):
+                    in_origin = stripped.replace(" ", "").lower() == '[remote"origin"]'
+                elif in_origin and stripped.startswith("url"):
+                    remote_url = stripped.split("=", 1)[-1].strip()
+                    break
+    except Exception:  # noqa: BLE001
+        remote_url = ""
+
+    if remote_url:
+        m = re.search(
+            r"github\.com[/:]([^/]+)/([^/]+?)(?:\.git)?/?$", remote_url)
+        if m:
+            return m.group(1), m.group(2)
+
+    return "tafelsmart", "draxo"
+
+
+_OWNER, _REPO = _discover_github_repo()
+GITHUB_OWNER: str = _OWNER
+GITHUB_REPO: str = _REPO
 GITHUB_API_URL: str = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases/latest"
 
 # Fallback: Netlify version.json (only used if GitHub is unreachable).
