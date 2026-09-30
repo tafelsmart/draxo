@@ -1,3 +1,37 @@
+// ============== AUTH v2 — Ed25519-Grant ==============
+//
+// WAS SICH GEÄNDERT HAT UND WARUM
+// ---------------------------------
+// Bis v1.2 lag hier ein symmetrisches 32-Byte-Geheimnis, aufgeteilt auf
+// vier Byte-Tabellen (_sa/_sb/_sc/_sd) und mit _recon() wieder zusammengesetzt.
+// Dieselbe Rekonstruktion stand in license_manager.py und — im Klartext —
+// in keygen.html auf der Website.
+//
+// Das war keine Geheimnishaltung: wer den Quelltext las, konnte offline
+// beliebige Keys erzeugen. Die "Härtung" darüber (3-Slot-Konsens, CRC-Canary,
+// Modul-Guard) schützte ausschließlich vor Byte-Patches in dieser DLL.
+// Der Keygen umging sie vollständig.
+//
+// Jetzt gilt asymmetrisch: der Server signiert, der Client prüft.
+// Das Geheimnis existiert nur noch auf dem Server (DRAXO_SIGNING_KEY
+// in der .env des Discord-Bots). Diese Datei enthält es nicht mehr —
+// und das ist der eigentliche Gewinn, nicht die Verteidigung.
+//
+// WAS HIER NOCH FEHLT
+// -------------------
+// Die DLL prüft Grants derzeit nicht kryptografisch. Eine
+// Ed25519-Verifikation für C++ wäre rund 600 Zeilen Feldarithmetik,
+// und eine davon, die nicht gegen die RFC-8032-Vektoren getestet ist,
+// ist schlimmer als keine: sie fällt still positiv aus.
+//
+// Bis dahin gilt die Prüfung im Launcher (license_manager.py +
+// license_signing.py). Der beweist die Signatur mit dem öffentlichen
+// Schlüssel und fragt den Bot, ob der Grant noch gilt.
+//
+// Offen für später: ed25519::verify() in dieser Datei aufrufen und
+// auth::check() aus dllmain.cpp heraus tatsächlich aufrufen.
+// Beides ist hier vorbereitet, aber nicht aktiviert — siehe unten.
+
 #include "pch.h"
 #include "core/strcrypt.h"
 #include "core/auth.h"
@@ -10,8 +44,8 @@
 // ============== HARDENED AUTH v3 ==============
 // Defense-in-depth layers:
 //   L1: 3-slot consensus (patch 1 slot -> 2 remain, self-heal)
-//   L2: Split secret + runtime XOR reconstruction
-//   L3: Poly-XOR (2 rounds with feed-forward)
+//   L2: (entfallen — das geteilte Geheimnis ist raus, siehe oben)
+//   L3: (entfallen — Poly-XOR brauchte das Geheimnis)
 //   L4: Runtime function CRC (detects validateKey patching)
 //   L5: Opaque predicates (confuse static analysis)
 //   L6: Module-level guard (Module::setEnabled rejects if !auth)
@@ -28,28 +62,11 @@ static volatile uint32_t _s1 = 0x00000000;
 static volatile uint32_t _s2 = 0x00000000;
 static const uint32_t MAGIC = 0x52414F4B; // "KAOR" = Key Auth OK Read
 
-// ---- L2: Split secret (4 interleaved arrays) ----
-// The real 32-byte secret is NEVER stored contiguously.
-// _recon() reassembles it deterministically (fixed constants) so that
-// the PHP keygen (tools/keygen.php) can reproduce the EXACT same key.
-// NOTE: must stay deterministic — no runtime values (module base etc.)
-// or the web keygen and the DLL would disagree.
-static const uint8_t _sa[8]={0xD4,0x7B,0x0E,0x28,0x13,0x9C,0xDF,0x69};
-static const uint8_t _sb[8]={0x1A,0xE2,0x6D,0x47,0x86,0x71,0x36,0xF5};
-static const uint8_t _sc[8]={0x8F,0x55,0xA3,0xC9,0x2D,0xB0,0xE8,0xAB};
-static const uint8_t _sd[8]={0x3C,0x91,0xBF,0xFA,0x5E,0x44,0x0A,0x12};
-
-// Fixed per-part XOR masks (deterministic — mirrors PHP $SX masks)
-static const uint8_t _sx[4] = {0xA3, 0x5C, 0xF1, 0x7E};
-
-static void _recon(uint8_t out[32]) {
-    for(int i=0;i<8;i++){
-        out[i*4+0] = _sa[i] ^ (uint8_t)(_sx[0] + (uint8_t)i);
-        out[i*4+1] = _sb[i] ^ (uint8_t)(_sx[1] + (uint8_t)i);
-        out[i*4+2] = _sc[i] ^ (uint8_t)(_sx[2] + (uint8_t)i);
-        out[i*4+3] = _sd[i] ^ (uint8_t)(_sx[3] + (uint8_t)i);
-    }
-}
+// ---- Kein Geheimnis mehr im Binary ----
+//
+// Der Block, der hier früher stand (vier Byte-Tabellen + _sx-Masken +
+// _recon), ist ersatzlos entfernt. Wer diese Datei baut, liefert damit
+// nichts mehr aus, womit sich ein Key fabrizieren lässt.
 
 // ---- Consensus operations ----
 static void _setAuth(bool ok) {
@@ -115,37 +132,6 @@ __declspec(noinline) static bool _opaqueTrue() {
     return (d & 1) == 1; // Always true for these constants
 }
 
-// ---- Poly-XOR (feed-forward, 2 rounds) ----
-// More resistant to key extraction than single-pass XOR.
-// NOTE: feed-forward makes this NON-self-inverse — decryption MUST use
-// _polyXorInv (a second forward pass does NOT recover plaintext).
-static void _polyXor(uint8_t* data, size_t len, const uint8_t* key, size_t klen) {
-    uint8_t prev = 0x7B; // initial feedback
-    for (size_t i = 0; i < len; i++) {
-        uint8_t k = key[i % klen];
-        // Round 1: XOR with key and previous byte (CBC-like)
-        uint8_t r1 = data[i] ^ k ^ prev;
-        // Round 2: XOR with rotated key and position-dependent offset
-        uint8_t r2 = r1 ^ key[(i + 7) % klen] ^ (uint8_t)(i & 0xFF);
-        data[i] = r2;
-        prev = r2; // feedback uses CIPHER byte (r2), not plaintext
-    }
-}
-
-// Exact inverse of _polyXor (used by validateKey/getKeyExpiry).
-// Feed-forward is non-self-inverse: prev must track the CIPHER byte.
-//   plain[i] = c[i] ^ k[i%klen] ^ k[(i+7)%klen] ^ (i&0xFF) ^ prev; prev = c[i]
-static void _polyXorInv(uint8_t* data, size_t len, const uint8_t* key, size_t klen) {
-    uint8_t prev = 0x7B;
-    for (size_t i = 0; i < len; i++) {
-        uint8_t c = data[i];              // save cipher byte before overwrite
-        uint8_t k = key[i % klen];
-        uint8_t p = c ^ k ^ key[(i + 7) % klen] ^ (uint8_t)(i & 0xFF) ^ prev;
-        data[i] = p;
-        prev = c;                          // feedback uses cipher byte
-    }
-}
-
 // ---- SHA-256 (unchanged) ----
 struct SHA256_CTX { uint32_t s[8]; uint64_t n; uint8_t b[64]; };
 static const uint32_t K[64]={
@@ -200,31 +186,7 @@ static void sha256(const uint8_t* d,size_t l,uint8_t* dg){SHA256_CTX c;sha256_i(
 
 // ---- Base32 (unchanged) ----
 static const char B32[]="0123456789ABCDEFGHJKMNPQRSTVWXYZ";
-static std::string b32enc(const uint8_t* d,size_t l){
- std::string o;int b=0,bc=0;
- for(size_t i=0;i<l;i++){b=(b<<8)|d[i];bc+=8;while(bc>=5){bc-=5;o+=B32[(b>>bc)&0x1F];}}
- if(bc>0)o+=B32[(b<<(5-bc))&0x1F];return o;
-}
-static bool b32dec(const std::string& in,uint8_t* out,size_t ol){
- // Crockford Base32 decode table for A..Z (excludes I,L,O,U).
- // Must EXACTLY mirror the encode alphabet above:
- //   A=10..H=17, J=18, K=19, M=20, N=21, P=22..T=26, V=27..Z=31
- // Excluded letters map to their visually-ambiguous twins (I->1, L->1, O->0, U->V).
- static const int T[26]={10,11,12,13,14,15,16,17,1,18,19,1,20,21,0,22,23,24,25,26,27,27,28,29,30,31};
- int b=0,bc=0;size_t idx=0;
- for(char c:in){
-  if(c=='-')continue;int v=-1;
-  if(c>='0'&&c<='9')v=c-'0';
-  else if(c>='A'&&c<='Z')v=T[c-'A'];
-  else if(c>='a'&&c<='z'){c-=32;if(c>='A'&&c<='Z')v=T[c-'A'];}
-  if(v<0)continue;b=(b<<5)|v;bc+=5;
-  while(bc>=8&&idx<ol){bc-=8;out[idx++]=(uint8_t)((b>>bc)&0xFF);}
- }
- return idx==ol;
-}
-
-// ---- HWID: CPUID + VolumeSerial + MachineGuid (NO WMI, NO COM) ----
-// WMI (IWbemLocator) ist prozessabhängig (COM-Apartment, Security-Context)
+// ---- HWID ----
 // und liefert in javaw.exe andere Werte als in PowerShell.* Die neue
 // Berechnung verwendet ausschließlich CPUID, GetVolumeInformation und
 // Registry — deterministisch, kein COM, immer gleiche HWID.
@@ -266,130 +228,166 @@ std::string getHWID(){
  return h;
 }
 
-// ---- Key generation (poly-XOR hardened) ----
-std::string generateKey(const std::string& hwid, uint32_t expiryHours){
- uint8_t hs[32];sha256((const uint8_t*)hwid.c_str(),hwid.size(),hs);
- uint32_t expiry=0;
- if(expiryHours>0){time_t now=time(nullptr);expiry=(uint32_t)(now+expiryHours*3600);}
- uint8_t enc[16];
- for(int i=0;i<12;i++)enc[i]=hs[i];
- enc[12]=(uint8_t)(expiry>>24);
- enc[13]=(uint8_t)(expiry>>16);
- enc[14]=(uint8_t)(expiry>>8);
- enc[15]=(uint8_t)(expiry);
- // Apply poly-XOR with reconstructed secret
- uint8_t sec[32];_recon(sec);
- _polyXor(enc,16,sec,32);
- std::string b=b32enc(enc,16);
- while(b.size()<26)b+='0';if(b.size()>26)b.resize(26);
- return "DRAXO-"+b.substr(0,5)+"-"+b.substr(5,5)+"-"+b.substr(10,5)+"-"
-        +b.substr(15,5)+"-"+b.substr(20,5)+"-"+b.substr(25,1);
-}
+// ---- Grant-Format (Ed25519) ----
+//
+// DRAXO3-<base32(nutzlast || signatur)>
+//
+//   Nutzlast 25 Byte, little-endian:
+//     [0]      Version = 3
+//     [1..9)   Discord-User-ID als uint64
+//     [9..17)  sha256(HWID)[0:8]
+//     [17..21) ausgestellt (uint32)
+//     [21..25) laeuft ab (uint32, 0 = unbefristet)
+//
+//   Signatur 64 Byte = Ed25519(nutzlast)
+//
+// Die Nutzlast laesst sich hier lesen, die Signatur nicht pruefen — dazu
+// fehlt in dieser DLL die Ed25519-Verifikation (siehe Kopf dieser Datei).
+// Was diese Funktionen also tun: Form, Ablauf und HWID-Bindung melden.
+// Die Echtheit beweist der Launcher.
 
-std::string generateKey(const std::string& hwid){
- return generateKey(hwid,0);
-}
+static const char* const B32_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
-// ---- Expiry helpers (unchanged) ----
-uint32_t getKeyExpiry(const std::string& key){
- if(key.size()<30)return 0;
- std::string b;for(char c:key){if(c=='-'||c==' ')continue;if(c>='a'&&c<='z')c-=32;b+=c;}
- if(b.size()>=5&&b.substr(0,5)=="DRAXO")b=b.substr(5);
- if(b.size()<26)return 0;if(b.size()>26)b.resize(26);
- uint8_t enc[16]={};
- if(!b32dec(b,enc,16))return 0;
- uint8_t sec[32];_recon(sec);
- _polyXorInv(enc,16,sec,32); // decrypt (must be the inverse, not forward!)
- uint32_t expiry=((uint32_t)enc[12]<<24)|((uint32_t)enc[13]<<16)|((uint32_t)enc[14]<<8)|(uint32_t)enc[15];
- return expiry;
-}
-
-bool isKeyExpired(const std::string& key){
- uint32_t expiry=getKeyExpiry(key);
- if(expiry==0)return false;
- return (time_t)expiry<time(nullptr);
-}
-
-std::string getExpiryString(const std::string& key){
- uint32_t expiry=getKeyExpiry(key);
- if(expiry==0)return "Permanent";
- time_t t=(time_t)expiry;char buf[32];
- struct tm* ti=localtime(&t);
- strftime(buf,sizeof(buf),"%Y-%m-%d %H:%M",ti);
- return std::string(buf);
-}
-
-// ---- Hardened validateKey ----
-bool validateKey(const std::string& key){
- // L4: Runtime code check
- if(!_codeCheck()){lock();return false;}
- // L5: Opaque predicate (confuses static analysis)
- if(!_opaqueTrue()){lock();return false;}
-
- if(key.size()<24)return false;
- std::string b;for(char c:key){if(c=='-'||c==' ')continue;if(c>='a'&&c<='z')c-=32;b+=c;}
- if(b.size()>=5&&b.substr(0,5)=="DRAXO")b=b.substr(5);
- bool isV2=(b.size()>=26);
- size_t plen=isV2?16:12;
- if(b.size()>(isV2?26:20))b.resize(isV2?26:20);
- if(b.size()<(isV2?26:20))return false;
-
- uint8_t enc[16]={};
- if(!b32dec(b,enc,plen)){lock();return false;}
-
- // Decrypt with poly-XOR inverse (feed-forward is NOT self-inverse)
- uint8_t sec[32];_recon(sec);
- _polyXorInv(enc,plen,sec,32);
-
- // Compare HWID hash
- std::string h=getHWID();uint8_t hs[32];sha256((const uint8_t*)h.c_str(),h.size(),hs);
- for(int i=0;i<12;i++)if(enc[i]!=hs[i]){lock();return false;}
-
- // Check expiry
- if(isV2){
-  uint32_t expiry=((uint32_t)enc[12]<<24)|((uint32_t)enc[13]<<16)|((uint32_t)enc[14]<<8)|(uint32_t)enc[15];
-  if(expiry!=0&&(time_t)expiry<time(nullptr)){lock();return false;}
+static int b32_value(char c){
+ if(c>='0'&&c<='9')return c-'0';
+ if(c>='A'&&c<='Z'){
+  static const signed char T[26]={10,11,12,13,14,15,16,17,1,18,19,1,20,21,0,22,23,24,25,26,27,27,28,29,30,31};
+  return T[c-'A'];
  }
-
- return true;
+ if(c>='a'&&c<='z')return b32_value((char)(c-32));
+ return -1;
 }
 
-// ── Key debug helpers ──────────────────────────────────────────────
+struct GrantInfo{
+ bool wellFormed=false;
+ uint8_t version=0;
+ uint64_t discordId=0;
+ uint8_t hwidHash[8]={0,0,0,0,0,0,0,0};
+ uint32_t issuedAt=0;
+ uint32_t expiresAt=0;
+ bool hasMachineBinding=false;
+ bool hasAccountBinding=false;
+};
 
-// Compute sha256(hwid) and return the first 24 hex chars (12 bytes).
-// Used by the menu to compare against the decoded key prefix.
-std::string hashHWID12(const std::string& hwid){
- uint8_t hs[32];sha256((const uint8_t*)hwid.c_str(),hwid.size(),hs);
- char buf[25];
- static const char hx[]="0123456789ABCDEF";
- for(int i=0;i<12;i++){buf[i*2]=hx[hs[i]>>4];buf[i*2+1]=hx[hs[i]&0xF];}
- buf[24]=0;
- return std::string(buf);
+// Liest einen Grant ein, ohne die Signatur zu pruefen (siehe Kopf).
+static GrantInfo grant_parse(const std::string& token){
+ GrantInfo g;
+ size_t start=0;
+ if(token.size()>=7&&token.compare(0,7,"DRAXO3-")==0)start=7;
+ std::string body;
+ for(size_t i=start;i<token.size();i++){
+  char c=token[i];
+  if(c=='-'||c==' '||c=='\t'||c=='\r'||c=='\n')continue;
+  body+=c;
+ }
+ // 89 Byte ergeben 143 Base32-Zeichen (89*8/5 = 142.4 -> 143)
+ if(body.size()<143)return g;
+ body=body.substr(0,143);
+
+ uint8_t raw[89];
+ unsigned acc=0;int bits=0;size_t n=0;
+ for(char c:body){
+  int v=b32_value(c);
+  if(v<0)return g;
+  acc=(acc<<5)|(unsigned)v;bits+=5;
+  if(bits>=8){bits-=8;if(n<89)raw[n++]=(uint8_t)((acc>>bits)&0xFF);}
+ }
+ if(n<89)return g;
+
+ g.version=raw[0];
+ if(g.version!=3)return g;
+ for(int i=0;i<8;i++)g.discordId|=(uint64_t)raw[1+i]<<(8*i);
+ for(int i=0;i<8;i++)g.hwidHash[i]=raw[9+i];
+ for(int i=0;i<4;i++)g.issuedAt|=(uint32_t)raw[17+i]<<(8*i);
+ for(int i=0;i<4;i++)g.expiresAt|=(uint32_t)raw[21+i]<<(8*i);
+
+ static const uint8_t ZERO[8]={0,0,0,0,0,0,0,0};
+ g.hasMachineBinding=memcmp(g.hwidHash,ZERO,8)!=0;
+ g.hasAccountBinding=g.discordId!=0;
+ g.wellFormed=true;
+ return g;
 }
 
-// Decodes a DRAXO key and returns the first 24 hex chars (12 bytes)
-// of the SHA-256 hash the key expects. Returns "" if the key is
-// malformed or can't be decoded. Used by the menu to show a live
-// match/mismatch preview before the user clicks Activate.
-std::string getKeyHWID(const std::string& key){
- if(key.size()<24)return "";
- std::string b;for(char c:key){if(c=='-'||c==' ')continue;if(c>='a'&&c<='z')c-=32;b+=c;}
- if(b.size()>=5&&b.substr(0,5)=="DRAXO")b=b.substr(5);
- if(b.size()<26)return "";
- b=b.substr(0,26);
- uint8_t enc[16]={};
- if(!b32dec(b,enc,16))return "";
- uint8_t sec[32];_recon(sec);
- _polyXorInv(enc,16,sec,32);
- char buf[25];
- static const char hx[]="0123456789ABCDEF";
- for(int i=0;i<12;i++){buf[i*2]=hx[enc[i]>>4];buf[i*2+1]=hx[enc[i]&0xF];}
- buf[24]=0;
- return std::string(buf);
-}
+// ---- Grant-Auswertung ----
+//
+// ACHTUNG: was true liefert, heisst "der Grant sieht formal gueltig aus".
+// Die Signatur hat der Launcher geprueft. Hier wird nur noetig, was ohne
+// Signaturpruefung sinnvoll feststellbar ist.
 
 std::string getStoredKey(){return Config::getString("License","key","");}
 void storeKey(const std::string& k){Config::setString("License","key",k);}
+
+uint32_t getKeyExpiry(const std::string& key){
+ GrantInfo g=grant_parse(key);
+ if(!g.wellFormed)return 0;
+ return g.expiresAt;
+}
+
+bool isKeyExpired(const std::string& key){
+ GrantInfo g=grant_parse(key);
+ if(!g.wellFormed)return true;
+ if(g.expiresAt==0)return false;
+ return (time_t)g.expiresAt<time(nullptr);
+}
+
+std::string getExpiryString(const std::string& key){
+ GrantInfo g=grant_parse(key);
+ if(!g.wellFormed)return "-";
+ if(g.expiresAt==0)return "Permanent";
+ time_t t=(time_t)g.expiresAt;
+ struct tm tmv;
+ #ifdef _WIN32
+  localtime_s(&tmv,&t);
+ #else
+  localtime_r(&t,&tmv);
+ #endif
+ char buf[32];
+ strftime(buf,sizeof(buf),"%Y-%m-%d %H:%M",&tmv);
+ return std::string(buf);
+}
+
+bool validateKey(const std::string& key){
+ GrantInfo g=grant_parse(key);
+ if(!g.wellFormed){
+  // Kein DRAXO3-Grant. Alte DRAXO-Keys aus der Zeit vor der Umstellung
+  // sind ungueltig — sie liess sich ohne das (entfernte) Geheimnis nicht
+  // mehr pruefen, und sie waeren ohnehin frei erzeugbar gewesen.
+  printf(STR_C("[Draxo] AUTH: Kein gültiger Grant (Format DRAXO3-… erwartet)\n"));
+  lock();return false;
+ }
+ std::string h=getHWID();
+ if(g.hasMachineBinding){
+  uint8_t hs[32];sha256((const uint8_t*)h.c_str(),h.size(),hs);
+  if(memcmp(hs,g.hwidHash,8)!=0){
+   printf(STR_C("[Draxo] AUTH: Grant gehört zu einem anderen Rechner\n"));
+   lock();return false;
+  }
+ }
+ if(g.expiresAt!=0&&(time_t)g.expiresAt<time(nullptr)){
+  printf(STR_C("[Draxo] AUTH: Grant abgelaufen\n"));
+  lock();return false;
+ }
+ return true;
+}
+
+std::string hashHWID12(const std::string& hwid){
+ uint8_t hs[32];sha256((const uint8_t*)hwid.c_str(),hwid.size(),hs);
+ char buf[25];static const char hx[]="0123456789ABCDEF";
+ for(int i=0;i<12;i++){buf[i*2]=hx[hs[i]>>4];buf[i*2+1]=hx[hs[i]&0xF];}
+ buf[24]=0;return std::string(buf);
+}
+
+// HWID-Anzeige fuer die Menue-Vorschau: bei v3 ist der Rechner nicht
+// direkt auslesbar (er steckt signiert in der Nutzlast).
+std::string getKeyHWID(const std::string& key){
+ GrantInfo g=grant_parse(key);
+ if(!g.wellFormed||!g.hasMachineBinding)return "";
+ char buf[17];static const char hx[]="0123456789ABCDEF";
+ for(int i=0;i<8;i++){buf[i*2]=hx[g.hwidHash[i]>>4];buf[i*2+1]=hx[g.hwidHash[i]&0xF];}
+ buf[16]=0;
+ return std::string(buf);
+}
+
 
 // ── UI-friendly status query ────────────────────────────────────────
 AuthInfo getStatus() {

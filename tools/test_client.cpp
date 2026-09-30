@@ -153,68 +153,87 @@ void test_mappings() {
     XT("MC_getConnection exists"); C(strlen(Mappings::MC_getConnection) > 0);
 }
 
-// ── Auth tests (poly-XOR keygen — cross-language verification) ──────
-// The reference vector below was computed by tools/keygen_reference.py
-// and MUST match the PHP keygen output (tools/keygen.php keygen_selfcheck).
-void test_auth_keygen() {
-    printf("\n=== AUTH: poly-XOR keygen ===\n");
+// ── Auth tests (Ed25519-Grant, v2) ─────────────────────────────────
+//
+// Bis hier stand ein Test, der pruefte, dass die DLL denselben Key erzeugt
+// wie die Web-Keygen-Seite. Diese Kopplung gibt es nicht mehr: Keys werden
+// vom Server signiert, und die DLL besitzt den privaten Schluessel nicht
+// (und darf ihn nicht besitzen).
+//
+// Was hier geprueft wird, ist das, was die DLL tatsaechlich kann: ein
+// Grant-Token lesen, Ablauf und HWID-Bindung beurteilen und den Stand in
+// der Config ablegen. Die Signatur beweist der Launcher
+// (license_manager.py + license_signing.py).
+//
+// Die Referenz-Grants unten hat der Server mit
+//     python -m draxo_bot.signing keygen
+// und dann /key erzeugt. Sie sind auf die Test-HWID gebunden, damit der
+// Binding-Test etwas Greifbares hat.
+static const char* const GRANT_PERMANENT =
+    "DRAXO3-0CMJ013TTCWHE3YDDGFQT7E6E5YRWGXXD8000000FRGQWFXE3WBMTP5R5X0P2B3JJSER11GW519PC8HW3E0DH6Z6BRMVMT9E0MB4W35BVPYW6STXE9JZWTQSB2SJ18JJV05VEDYPV715M38";
+static const char* const GRANT_TIMED =
+    "DRAXO3-0CMJ013TTCWHE3YDDGFQT7E6E5YRWGXXD879BFKAZGRE9Y11J43NSZ0AZZYMDEA8JXSYB4CJJXFAMY5ESH456RPSZGT8V7F7YB9RCYE2M35S19EKTERQRDXEH6V19J3SN36AK51776TTJ30";
+static const char* const GRANT_ACCOUNT_ONLY =
+    "DRAXO3-0CMJ013TTCWHE3R0000000000008WGXXD879BFKA142C0A8AE3F26PKAYM9GYK2H4QB6CQBCEZFDW1F0XS51PK93YYJFJAYS539P115SGK0767XQ67AKEG10Z329658KCP8BP62TZGJ4G38";
+static const char* const TEST_HWID =
+    "0123456789ABCDEF0123456789ABCDEF";
 
-    // Fixed HWID + permanent key -> fully deterministic
-    const char* hwid = "0123456789ABCDEF0123456789ABCDEF";
-    std::string k = auth::generateKey(hwid, 0);
-    XT("permanent key matches reference");
-    C(k == "DRAXO-5YQZZ-4VAK1-8FJGN-XTDDG-A9076-M");
+void test_auth_grant() {
+    printf("\n=== AUTH: Ed25519-Grant ===\n");
 
-    XT("key format v2 (37 chars, 6 groups)");
-    C(k.size() == 37 && k.rfind("DRAXO-", 0) == 0);
+    // ── Format ──
+    XT("grant length is 150 chars");   C(strlen(GRANT_PERMANENT) == 150);
+    XT("grant prefix");               C(strncmp(GRANT_PERMANENT, "DRAXO3-", 7) == 0);
 
-    // Roundtrip: generate for real HWID, then validate
-    std::string real = auth::getHWID();
-    std::string pk = auth::generateKey(real, 0);   // permanent
-    std::string tk = auth::generateKey(real, 24);  // 24h
-    XT("permanent key validates");   C(auth::validateKey(pk));
-    XT("timed key validates");       C(auth::validateKey(tk));
-    XT("timed key not expired");     C(!auth::isKeyExpired(tk));
-    XT("permanent key never expires"); C(!auth::isKeyExpired(pk));
-    XT("expiry > now");              C(auth::getKeyExpiry(tk) > (uint32_t)time(nullptr));
-    XT("permanent expiry == 0");     C(auth::getKeyExpiry(pk) == 0);
+    // ── Ablauf ──
+    XT("permanent grant has no expiry"); C(auth::getKeyExpiry(GRANT_PERMANENT) == 0);
+    XT("permanent grant never expires"); C(!auth::isKeyExpired(GRANT_PERMANENT));
+    XT("permanent grant reads 'Permanent'");
+    C(auth::getExpiryString(GRANT_PERMANENT) == "Permanent");
 
-    // Tampered key must be rejected (flip one char)
-    std::string bad = pk;
-    bad[10] = (bad[10] == 'A') ? 'B' : 'A';
-    XT("tampered key rejected");     C(!auth::validateKey(bad));
+    XT("timed grant has an expiry");  C(auth::getKeyExpiry(GRANT_TIMED) > 0);
+    XT("timed grant not expired");    C(!auth::isKeyExpired(GRANT_TIMED));
+    XT("timed grant expiry in the future");
+    C(auth::getKeyExpiry(GRANT_TIMED) > (uint32_t)time(nullptr));
 
-    // Garbage rejected
-    XT("garbage key rejected");      C(!auth::validateKey("DRAXO-XXXXX-XXXXX-XXXXX-XXXXX-XXXXX-X"));
+    // ── HWID-Bindung ──
+    XT("machine-bound grant exposes its HWID prefix");
+    C(auth::getKeyHWID(GRANT_PERMANENT).size() == 16);
+    XT("account-only grant has no machine binding");
+    C(auth::getKeyHWID(GRANT_ACCOUNT_ONLY).empty());
 
-    // Deterministic decode checks (hardware-independent): the fixed-HWID
-    // reference keys (computed by tools/keygen_reference.py with a fixed
-    // clock) must decode to exact known values. This guards the b32dec
-    // table against future drift even on machines whose real HWID happens
-    // to avoid V/W/X/Y in generated keys.
-    XT("permanent ref key decodes to expiry 0");
-    C(auth::getKeyExpiry("DRAXO-5YQZZ-4VAK1-8FJGN-XTDDG-A9076-M") == 0);
-    XT("timed ref key decodes to exact expiry");
-    C(auth::getKeyExpiry("DRAXO-5YQZZ-4VAK1-8FJGN-XTDDP-053NR-W") == 1700086400u);
+    // ── Ablehnung ──
+    // Die DLL prueft die Signatur nicht. Sie lehnt aber ab, was strukturell
+    // kein Grant ist — und zwar mit derselben Meldung wie vorher.
+    XT("empty key rejected");        C(!auth::validateKey(""));
+    XT("garbage key rejected");      C(!auth::validateKey("hello world"));
+    XT("legacy DRAXO- key rejected"); C(!auth::validateKey("DRAXO-F7X66-AZXVC-Z3GYE-Y776Z-JSP0W-G"));
+    XT("truncated grant rejected");  C(!auth::validateKey("DRAXO3-ABC"));
+    XT("wrong-version grant rejected");
+    C(!auth::validateKey("DRAXO3-0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"));
 
-    // ── getStatus() smoke tests ─────────────────────────────────────
-    XT("getStatus returns LOCKED when no key stored");
+    // ── Ablage ──
+    XT("storeKey / getStoredKey round-trip");
     {
-        auto info = auth::getStatus();
-        C(info.state == auth::LOCKED && !info.hwid.empty());
+        std::string before = auth::getStoredKey();
+        auth::storeKey(GRANT_PERMANENT);
+        C(auth::getStoredKey() == std::string(GRANT_PERMANENT));
+        auth::storeKey(before);
     }
-    XT("getStatus returns VALID with live permanent key");
+
+    // ── Bindung gegen die echte Maschine ──
+    // Der Grant ist auf die Test-HWID gebunden, nicht auf diesen Rechner.
+    // Deshalb MUSS validateKey ihn hier ablehnen — das ist der Beweis, dass
+    // die HWID-Bindung überhaupt greift.
+    XT("grant for another machine is rejected");
+    C(!auth::validateKey(GRANT_PERMANENT));
+
+    // Und mit der passenden HWID akzeptiert — sha256(TEST_HWID)[0:8]
+    // muesste im Grant stehen. Das pruefen wir indirekt ueber getKeyHWID.
+    XT("HWID prefix matches sha256 of TEST_HWID");
     {
-        // Temporarily store the permanent key we just generated
-        std::string real = auth::getHWID();
-        std::string pk = auth::generateKey(real, 0);
-        auth::storeKey(pk);
-        auth::check();  // re-validate to set auth slots
-        auto info = auth::getStatus();
-        C(info.state == auth::VALID && info.expiryStr == "Permanent");
-        // Clean up: remove test key
-        Config::setString("License", "key", "");
-        auth::lock();
+        std::string expected = auth::hashHWID12(TEST_HWID).substr(0, 16);
+        C(auth::getKeyHWID(GRANT_PERMANENT) == expected);
     }
 }
 
@@ -229,7 +248,7 @@ int main() {
     test_config_presets();
     test_config_server_binds();
     test_mappings();
-    test_auth_keygen();
+    test_auth_grant();
 
     printf("\n========================================\n");
     printf("  RESULTS: %d passed, %d failed\n", s_passed, s_failed);

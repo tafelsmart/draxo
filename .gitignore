@@ -8,16 +8,13 @@ env/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
-
 # ── Build-Artefakte ───────────────────────────────────────────────────────────
 # dist/ = PyInstaller-Output (DraxoLauncher.exe)
 # build/ = gebaute DLLs, Prebuilt-DLLs, CMake-Cache, übersetzte Quellbäume
 build/
 dist/
-
 # ── Mappings-Cache von Mojang (jede Version mehrere MB) ───────────────────────
 tools/cache/
-
 # ── Binaries (werden als Release-Artefakte verteilt, nicht eingecheckt) ───────
 *.exe
 *.dll
@@ -25,25 +22,25 @@ tools/cache/
 *.lib
 *.obj
 *.ilk
-
 # ── Runtime-Konfiguration & Lizenz (NIE committen) ───────────────────────────
 config.json
 draxo_config.ini
 prebuilt/
-
 # ── Logs & Absturzberichte ────────────────────────────────────────────────────
 *.log
 *crashlog*.txt
 build_*.txt
 prebuild_*.txt
-
 # ── Secrets & Webhooks ────────────────────────────────────────────────────────
 discord_webhook.txt
+# .env.* würde auch die Vorlage .env.example einschliessen — die gehört
+# ausdrücklich ins Repo, damit die Konfiguration nachvollziehbar bleibt.
 .env
 .env.*
+!.env.example
+!bot/.env.example
 *.pem
 secrets/
-
 # ── Editor / Betriebssystem ───────────────────────────────────────────────────
 .vscode/
 .idea/
@@ -51,18 +48,44 @@ secrets/
 Thumbs.db
 desktop.ini
 .DS_Store
-
 # ── Agent-/Tool-Verzeichnisse (lokal, nicht Teil des Projekts) ───────────────
 .freebuff/
 .agents/
-
 # ─> Fremde Referenzprojekte (nur lokal als Vorlage genutzt) <──────────────────
 Scaffold-master/
-
 # ─> ImGui: nur was der Build braucht (docs/examples sind Ballast) <───────────
 imgui/docs/
 imgui/examples/
-
 # Laufzeit-Konfiguration der DLL (versteckt, dotfile)
 .draxo_config.ini
 .draxo_server_binds.txt
+
+# Discord-Anmeldung: enthaelt die Client-ID des eigenen Projekts
+discord_oauth.json
+draxo_auth.json
+
+# Entwicklung: UI-Screenshot-Hilfe
+_shot.py
+_shot_auth.py
+_capture.py
+_shots/
+
+# Zugangsdaten — niemals einchecken
+alles_bot.txt
+*.token
+.env
+
+# Discord-Bot: Laufzeitdaten (HWIDs, Rate-Limits, Audit-Log)
+bot/data/
+bot/.env
+
+# Temporäre Audit-Artefakte
+_audit/
+
+# Netlify Functions. Abhaengigkeiten werden beim Deploy installiert, nicht
+# im Repo gepflegert — sonst waechst der Ordner bei jedem Build mit und der
+# Diff besteht aus node_modules.
+node_modules/
+.netlify/
+*.tsbuildinfo
+package-lock.json

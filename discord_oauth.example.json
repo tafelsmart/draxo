@@ -1,0 +1,11 @@
+{
+  "_hinweis": "Kopieren nach discord_oauth.json und client_id eintragen. Diese Datei selbst wird nicht gelesen.",
+  "_anleitung": [
+    "1. https://discord.com/developers/applications -> New Application",
+    "2. General Information -> APPLICATION ID -> Copy",
+    "3. OAuth2 -> Redirects -> http://127.0.0.1/callback eintragen",
+    "4. client_id unten eintragen"
+  ],
+  "_kein_secret": "Ein Client Secret wird NICHT benoetigt. Der Launcher nutzt PKCE, damit in der EXE kein Geheimnis steckt, das auslesbar waere.",
+  "client_id": ""
+}

@@ -1,0 +1,63 @@
+[Unit]
+Description=Draxo Client Discord Bot
+Documentation=https://draxo.netlify.app/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+
+# ── Pfade ────────────────────────────────────────────────────────────
+# Anpassen, falls der Bot woanders liegt:
+#   WorkingDirectory=/opt/draxo-bot
+WorkingDirectory=/opt/draxo-bot
+EnvironmentFile=/opt/draxo-bot/.env
+ExecStart=/opt/draxo-bot/.venv/bin/python -m draxo_bot
+
+# Neustart nur bei echtem Fehlschlag, nicht bei sauberem Beenden.
+Restart=on-failure
+RestartSec=10s
+TimeoutStopSec=20s
+KillSignal=SIGTERM
+
+# ── Härtung ──────────────────────────────────────────────────────────
+# Der Bot braucht nur Lesezugriff aufs eigene Verzeichnis und Schreib-
+# zugriff auf ./data. Alles andere wird explizit verboten.
+User=draxo
+Group=draxo
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+# Der einzige beschreibbare Pfad:
+ReadWritePaths=/opt/draxo-bot/data
+
+# Der Bot beendet sich selbst über SIGTERM (discord.py räumt die Gateway-
+# Sitzung sauber auf) — deshalb ist ein Kill-Signal nötig, kein kill -9.
+SendSIGKILL=yes
+FinalKillSignal=SIGKILL
+
+# Nicht als Root laufen lassen, auch nicht zur Fehlersuche:
+# für Diagnose stattdessen:  sudo -u draxo journalctl -u draxo-bot -f
+
+[Install]
+WantedBy=multi-user.target

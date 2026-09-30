@@ -1,0 +1,9 @@
+# Netlify redirects & routing
+# All .html files are served directly — no SPA needed for this static site.
+# /keygen.html?check works natively.
+
+# Canonical domain redirect (replace with your actual Netlify domain)
+# https://draxo.netlify.app/*  https://your-custom-domain.com/:splat  301!
+
+# Force HTTPS
+# No explicit rule needed — Netlify enforces HTTPS by default.

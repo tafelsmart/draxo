@@ -3,9 +3,11 @@
 #include <string>
 
 /*
- * AUTH v3 -- Hardened License System
- * Multi-layer: 3-slot consensus / split secret / runtime CRC / poly-XOR
- * No single byte-patch can bypass the system.
+ * AUTH v2 — Ed25519-Grant (siehe auth.cpp für die ausführliche Begründung)
+ *
+ * Kein Geheimnis im Binary mehr: der Server signiert, der Launcher prüft.
+ * Diese Datei liest die Grant-Struktur (Ablauf, HWID-Bindung) und meldet
+ * sie; die Signatur wird derzeit nicht kryptografisch geprüft.
  */
 
 namespace auth {
@@ -47,12 +49,12 @@ bool validateKey(const std::string& key);
 std::string getKeyHWID(const std::string& key);
 
 // Compute sha256(machineHWID) and return first 24 hex chars.
-// Used alongside getKeyHWID to compare key vs machine.
+// Used alongside getKeyHWID to compare grant vs machine.
 std::string hashHWID12(const std::string& hwid);
 
-// Generate keys (developer tool)
-std::string generateKey(const std::string& hwid, uint32_t expiryHours);
-std::string generateKey(const std::string& hwid);
+// Grants werden ausschliesslich vom Server signiert. Es gibt hier
+// bewusst keine generateKey()-Funktion: sie braeuchte den privaten
+// Schluessel, und der gehoert nicht in diese DLL.
 
 // Read/write key in Config
 std::string getStoredKey();

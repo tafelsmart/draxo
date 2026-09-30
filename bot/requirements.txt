@@ -1,0 +1,11 @@
+# Draxo Discord Bot — Laufzeitabhängigkeiten
+# Getestet mit Python 3.11+ auf Linux Mint 21/22.
+discord.py>=2.4,<3
+aiohttp>=3.9,<4
+
+# Nur fuer die Grant-Ausgabe noetig, nicht fuer die Pruefung:
+# der Server signiert damit, der Client verifiziert mit license_signing.py
+# in reinem Python — damit die gepackte EXE nichts zu buendeln hat.
+# Fehlt das Paket, weicht license_signing auf die eigene Implementierung aus;
+# beide Wege liefern bitgleiche Signaturen, dafuer gibt es einen Test.
+cryptography>=42,<46

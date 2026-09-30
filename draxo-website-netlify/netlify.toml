@@ -1,0 +1,76 @@
+# Draxo Client — Netlify Configuration
+#
+# WICHTIG: Functions werden bei "Deploy manually" (Drag & Drop) NICHT
+# ausgeliefert. Netlify parst den functions-Ordner nur bei Git-Deploys
+# oder beim Deploy ueber die Netlify CLI. Deshalb: entweder Repo
+# verbinden oder `netlify deploy --prod` aus diesem Ordner nutzen.
+
+[build]
+  # command = "" ist wichtig: die Site draxo.netlify.app hat im Netlify-UI
+  # noch "hugo" als Build-Command stehen (aus einer frueheren Konfiguration).
+  # UI-Einstellungen werden normalerweise von der toml ueberschrieben, aber
+  # nur, wenn hier ausdruecklich etwas steht — sonst laeuft der Deploy in
+  # "hugo: nicht gefunden" und bricht ab. Leer heisst: kein Build, die
+  # Dateien werden so hochgeladen, wie sie sind. Das ist richtig, die Seite
+  # ist statisch.
+  command = ""
+  publish = "."
+  functions = "netlify/functions"
+
+# Die Function nimmt den Discord-Interactions-Endpoint entgegen. Discord
+# prueft die Signatur jeder Anfrage selbst — eine zusaetzliche
+# Authentifizierung wuerde Discord nur beim Speichern der URL stoeren.
+# Identitaet kommt also aus DISCORD_PUBLIC_KEY, nicht aus einem Token.
+[functions]
+  node_bundler = "esbuild"
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Cache-Control = "public, max-age=3600"
+
+[[headers]]
+  for = "/keygen.html"
+  [headers.values]
+    Cache-Control = "no-store"
+
+# Der Updater im Launcher liest diese Datei, um eine neue Version zu
+# erkennen. Mit dem globalen max-age=3600 wuerde Netlify bis zu einer
+# Stunde eine alte version.json ausliefern — nach einem Release
+# bekommen die Clients dann die falsche Versionsnummer.
+[[headers]]
+  for = "/version.json"
+  [headers.values]
+    Cache-Control = "no-store, no-cache, must-revalidate"
+
+# Der Endpoint darf nicht in einen Cache. Eine zwischengespeicherte
+# PONG-Antwort auf einen PING wuerde Discord als "URL antwortet" akzeptieren,
+# obwohl die Signaturpruefung kaputt ist — und die URL speichern, obwohl
+# sie in Produktion nicht funktioniert.
+[[headers]]
+  for = "/.netlify/functions/interactions"
+  [headers.values]
+    Cache-Control = "no-store, no-cache, must-revalidate"
+    X-Content-Type-Options = "nosniff"
+
+# publish = "." legt auch den functions-Ordner mit ins Publish-Verzeichnis.
+# Ohne diese Regel waere der Quelltext der Function unter
+# /netlify/functions/interactions.js abrufbar. Kein Geheimnis (der
+# private Schluessel liegt auf dem Server), aber unnoetig.
+#
+# force = true ist Pflicht: Netlify laesst ohne force ein vorhandenes
+# Asset gewinnen, die Regel bleibt also wirkungslos und die JS-Datei
+# wird weiterhin ausgeliefert. Mit force ueberstimmt die Regel die
+# Datei und liefert 404.
+[[redirects]]
+  from = "/netlify/*"
+  to = "/index.html"
+  status = 404
+  force = true
+
+# Zu /.netlify/state.json gibt es bewusst KEINE Redirect-Regel. Netlify
+# reserviert den Pfad und lehnt jede Regel darauf ab ("path field must
+# not start with /.netlify") — die Datei wird auch nicht ausgeliefert.

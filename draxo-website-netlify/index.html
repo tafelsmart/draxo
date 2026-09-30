@@ -1,0 +1,856 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Draxo Client — Premium Minecraft Utility</title>
+    <meta name="description" content="Draxo Client — the ultimate Minecraft client. Undetected, premium features, modern GUI. For 1.17 to 26.x.">
+    <meta name="theme-color" content="#8B5CF6">
+    <link rel="icon" type="image/png" href="logo.png">
+    <link rel="shortcut icon" href="favicon.ico">
+    <script src="i18n.js"></script>
+
+    <style>
+        :root {
+            --bg: #0B0B10; --bg-card: #11111A; --bg-card-hover: #15151F;
+            --surface: #1B1B27; --border: #26263A;
+            --accent: #8B5CF6; --accent-hover: #A855F7; --accent-glow: #C084FC;
+            --accent-soft: rgba(139,92,246,0.15);
+            --text: #FFFFFF; --text-secondary: #9CA3AF; --text-muted: #6B7280;
+            --success: #22C55E; --warning: #F59E0B; --error: #EF4444;
+            --radius: 16px; --radius-sm: 10px;
+            --font: 'Segoe UI', -apple-system, system-ui, sans-serif;
+        }
+        * { margin:0;padding:0;box-sizing:border-box; }
+        html { scroll-behavior:smooth;font-family:var(--font);background:var(--bg);color:var(--text); }
+        body { min-height:100vh;overflow-x:hidden; }
+
+        /* ── Animated Gradient Background ──────────────────────────── */
+        body::after {
+            content:'';position:fixed;inset:0;z-index:-2;opacity:.4;
+            background:radial-gradient(ellipse 60% 50% at 20% 30%,rgba(139,92,246,.12) 0%,transparent 60%),
+                       radial-gradient(ellipse 50% 40% at 80% 70%,rgba(139,92,246,.08) 0%,transparent 60%),
+                       radial-gradient(ellipse 40% 60% at 50% 50%,rgba(192,132,252,.04) 0%,transparent 70%);
+            animation:gradientShift 20s ease-in-out infinite alternate;
+        }
+        @keyframes gradientShift {
+            0% { transform:scale(1) rotate(0deg); }
+            50% { transform:scale(1.3) rotate(3deg); }
+            100% { transform:scale(1) rotate(0deg); }
+        }
+
+        /* ── Floating Particles ────────────────────────────────────── */
+        .particles-container {
+            position:fixed;inset:0;z-index:-1;pointer-events:none;overflow:hidden;
+        }
+        .particle {
+            position:absolute;border-radius:50%;opacity:0;
+            animation:floatUp linear infinite;
+        }
+        @keyframes floatUp {
+            0% { opacity:0;transform:translateY(100vh) scale(0); }
+            10% { opacity:.6; }
+            90% { opacity:.2; }
+            100% { opacity:0;transform:translateY(-10vh) scale(2); }
+        }
+
+        /* ── Noise Overlay ─────────────────────────────────────────── */
+        body::before {
+            content:'';position:fixed;inset:0;opacity:.025;pointer-events:none;z-index:9999;
+            background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E");
+        }
+
+        /* ── Navbar ─────────────────────────────────────────────────── */
+        nav {
+            position:fixed;top:0;left:0;right:0;z-index:100;
+            background:rgba(11,11,16,.85);
+            backdrop-filter:blur(20px) saturate(180%);
+            -webkit-backdrop-filter:blur(20px) saturate(180%);
+            border-bottom:1px solid transparent;
+            transition:all .4s cubic-bezier(.4,0,.2,1);
+        }
+        nav.scrolled { border-bottom-color:var(--border); box-shadow:0 4px 40px rgba(0,0,0,.3); }
+        nav.hidden { transform:translateY(-100%); }
+        .nav-inner {
+            max-width:1200px;margin:0 auto;padding:0 24px;height:64px;
+            display:flex;align-items:center;justify-content:space-between;
+        }
+        .nav-logo { display:flex;align-items:center;gap:10px;font-size:20px;font-weight:700;color:var(--text);text-decoration:none; }
+        .nav-logo img { height:32px;width:32px;border-radius:8px;transition:transform .3s; }
+        .nav-logo:hover img { transform:rotate(-10deg) scale(1.1); }
+        .nav-links { display:flex;gap:32px;list-style:none; }
+        .nav-links a { color:var(--text-secondary);text-decoration:none;font-size:14px;font-weight:500;transition:all .2s;position:relative; }
+        .nav-links a::after {
+            content:'';position:absolute;bottom:-4px;left:0;width:0;height:2px;
+            background:var(--accent);border-radius:1px;transition:width .25s;
+        }
+        .nav-links a:hover { color:var(--text); }
+        .nav-links a:hover::after { width:100%; }
+
+        /* ── Language Switcher ─────────────────────────────────────── */
+        .lang-select {
+            background:var(--surface);color:var(--text);
+            border:1px solid var(--border);border-radius:8px;
+            padding:7px 10px;font-size:13px;font-weight:600;
+            font-family:var(--font);cursor:pointer;outline:none;
+            transition:all .25s;
+        }
+        .lang-select:hover, .lang-select:focus { border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft); }
+        .lang-select option { background:var(--bg-card);color:var(--text); }
+
+        .nav-btn {
+            background:var(--accent);color:white;padding:8px 20px;border-radius:8px;
+            font-size:14px;font-weight:600;text-decoration:none;
+            transition:all .25s;animation:btnPulse 3s ease-in-out infinite;
+        }
+        .nav-btn:hover { background:var(--accent-hover);box-shadow:0 0 30px var(--accent-soft);transform:translateY(-2px); }
+        @keyframes btnPulse {
+            0%,100% { box-shadow:0 0 0 0 rgba(139,92,246,.3); }
+            50% { box-shadow:0 0 0 12px rgba(139,92,246,0); }
+        }
+
+        /* ── Hero ────────────────────────────────────────────────────── */
+        .hero {
+            padding:170px 24px 130px;text-align:center;position:relative;overflow:hidden;
+        }
+        .hero::after {
+            content:'';position:absolute;inset:0;
+            background:radial-gradient(circle at 50% 30%,rgba(139,92,246,.18),transparent 60%);
+            pointer-events:none;animation:heroGlow 6s ease-in-out infinite alternate;
+        }
+        @keyframes heroGlow {
+            0% { opacity:.6;transform:scale(1); }
+            100% { opacity:1;transform:scale(1.2); }
+        }
+        .hero-content { position:relative;z-index:1;max-width:800px;margin:0 auto; }
+        .hero-badge {
+            display:inline-block;background:var(--accent-soft);color:var(--accent-glow);
+            padding:6px 18px;border-radius:20px;font-size:13px;font-weight:600;
+            margin-bottom:24px;border:1px solid rgba(139,92,246,.25);
+            animation:fadeInUp .6s ease-out both;
+        }
+        .hero h1 {
+            font-size:clamp(42px,7vw,72px);font-weight:800;line-height:1.05;
+            margin-bottom:20px;animation:fadeInUp .6s .1s ease-out both;
+        }
+        .hero h1 .accent {
+            background:linear-gradient(135deg,var(--accent),var(--accent-glow),var(--accent),var(--accent-hover));
+            background-size:300% 300%;
+            -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+            background-clip:text;animation:shimmer 4s ease-in-out infinite;
+        }
+        @keyframes shimmer {
+            0%,100% { background-position:0% 50%; }
+            50% { background-position:100% 50%; }
+        }
+        .hero-subtitle {
+            font-size:16px;color:var(--text-secondary);max-width:560px;margin:0 auto 36px;
+            line-height:1.6;min-height:52px;animation:fadeInUp .6s .2s ease-out both;
+        }
+        .hero-subtitle .tw-cursor {
+            display:inline-block;width:2px;height:1.1em;background:var(--accent);
+            margin-left:2px;vertical-align:text-bottom;animation:blink .8s step-end infinite;
+        }
+        @keyframes blink { 50% { opacity:0; } }
+        .hero-buttons { display:flex;gap:14px;justify-content:center;flex-wrap:wrap;animation:fadeInUp .6s .3s ease-out both; }
+        .btn {
+            display:inline-flex;align-items:center;gap:8px;padding:14px 28px;
+            border-radius:12px;font-size:15px;font-weight:600;text-decoration:none;
+            transition:all .3s cubic-bezier(.4,0,.2,1);cursor:pointer;border:none;position:relative;overflow:hidden;
+        }
+        .btn::after {
+            content:'';position:absolute;inset:0;background:linear-gradient(135deg,transparent 40%,rgba(255,255,255,.1) 50%,transparent 60%);
+            background-size:200% 200%;transform:translateX(-100%);transition:transform .6s;
+        }
+        .btn:hover::after { transform:translateX(100%); }
+        .btn-primary {
+            background:var(--accent);color:white;
+            box-shadow:0 0 30px rgba(139,92,246,.3),0 0 0 0 rgba(139,92,246,.3);
+            animation:btnPulse 3s ease-in-out infinite;
+        }
+        .btn-primary:hover { background:var(--accent-hover);transform:translateY(-3px) scale(1.03);box-shadow:0 0 60px rgba(139,92,246,.5);animation:none; }
+        .btn-secondary {
+            background:var(--surface);color:var(--text);border:1px solid var(--border);
+        }
+        .btn-secondary:hover { background:var(--bg-card-hover);border-color:var(--accent);transform:translateY(-2px); }
+
+        /* ── Discord Online Counter ──────────────────────────────────── */
+        .discord-online {
+            display:none;align-items:center;gap:8px;
+            background:var(--bg-card);border:1px solid var(--border);border-radius:20px;
+            padding:11px 18px;font-size:13px;font-weight:600;color:var(--text-secondary);
+            transition:all .3s;
+        }
+        .discord-online:hover { border-color:var(--accent);color:var(--text); }
+        .discord-online .dot {
+            width:9px;height:9px;border-radius:50%;background:var(--success);flex-shrink:0;
+            box-shadow:0 0 0 0 rgba(34,197,94,.5);
+            animation:dotPulse 2s ease-out infinite;
+        }
+        @keyframes dotPulse {
+            0% { box-shadow:0 0 0 0 rgba(34,197,94,.5); }
+            100% { box-shadow:0 0 0 9px rgba(34,197,94,0); }
+        }
+
+        /* ── Discord CTA ─────────────────────────────────────────────── */
+        .discord-cta {
+            text-align:center;background:var(--bg-card);
+            border:1px solid var(--accent);border-radius:var(--radius);
+            padding:44px 30px;margin:48px auto 0;max-width:620px;
+            box-shadow:0 0 60px rgba(139,92,246,.08);
+            transition:box-shadow .4s;
+        }
+        .discord-cta:hover { box-shadow:0 0 100px rgba(139,92,246,.16); }
+        .discord-cta .dc-icon { font-size:42px;margin-bottom:12px; }
+        .discord-cta h3 { font-size:22px;margin-bottom:10px; }
+        .discord-cta p {
+            color:var(--text-secondary);font-size:14px;line-height:1.7;
+            margin:0 auto 24px;max-width:440px;
+        }
+        .dc-actions { display:flex;gap:14px;justify-content:center;align-items:center;flex-wrap:wrap; }
+
+        @keyframes fadeInUp { from{opacity:0;transform:translateY(30px);} to{opacity:1;transform:translateY(0);} }
+
+        .hero-meta {
+            display:flex;gap:50px;justify-content:center;margin-top:70px;flex-wrap:wrap;
+            animation:fadeInUp .6s .4s ease-out both;
+        }
+        .hero-meta-item { text-align:center; }
+        .hero-meta-item .num {
+            font-size:32px;font-weight:800;
+            background:linear-gradient(135deg,var(--accent),var(--accent-glow));
+            -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
+            transition:transform .3s;
+        }
+        .hero-meta-item:hover .num { transform:scale(1.15); }
+        .hero-meta-item .label { font-size:13px;color:var(--text-muted);margin-top:4px; }
+
+        /* ── Scroll Reveal ───────────────────────────────────────────── */
+        .reveal { opacity:0;transform:translateY(40px);transition:all .8s cubic-bezier(.4,0,.2,1); }
+        .reveal.visible { opacity:1;transform:translateY(0); }
+        .reveal-left { opacity:0;transform:translateX(-40px);transition:all .8s cubic-bezier(.4,0,.2,1); }
+        .reveal-left.visible { opacity:1;transform:translateX(0); }
+        .reveal-right { opacity:0;transform:translateX(40px);transition:all .8s cubic-bezier(.4,0,.2,1); }
+        .reveal-right.visible { opacity:1;transform:translateX(0); }
+        .reveal-scale { opacity:0;transform:scale(.9);transition:all .7s cubic-bezier(.4,0,.2,1); }
+        .reveal-scale.visible { opacity:1;transform:scale(1); }
+
+        /* ── Sections ────────────────────────────────────────────────── */
+        section { padding:90px 24px;position:relative; }
+        .section-inner { max-width:1100px;margin:0 auto; }
+        .section-label {
+            text-align:center;font-size:13px;font-weight:600;color:var(--accent);
+            text-transform:uppercase;letter-spacing:2px;margin-bottom:12px;
+        }
+        .section-title {
+            text-align:center;font-size:clamp(28px,5vw,40px);font-weight:700;margin-bottom:16px;
+        }
+        .section-subtitle {
+            text-align:center;color:var(--text-secondary);font-size:17px;
+            max-width:600px;margin:0 auto 56px;
+        }
+        .section-divider {
+            width:60px;height:4px;background:linear-gradient(90deg,var(--accent),var(--accent-glow));
+            border-radius:2px;margin:0 auto 40px;
+        }
+
+        /* ── Features ────────────────────────────────────────────────── */
+        .features-grid { display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:24px; }
+        .feature-card {
+            background:rgba(17,17,26,.7);backdrop-filter:blur(12px);
+            -webkit-backdrop-filter:blur(12px);
+            border:1px solid var(--border);border-radius:var(--radius);
+            padding:30px;transition:all .4s cubic-bezier(.4,0,.2,1);
+            position:relative;overflow:hidden;
+        }
+        .feature-card::before {
+            content:'';position:absolute;top:0;left:0;right:0;height:2px;
+            background:linear-gradient(90deg,transparent,var(--accent),transparent);
+            opacity:0;transition:opacity .4s;
+        }
+        .feature-card:hover::before { opacity:1; }
+        .feature-card:hover {
+            border-color:var(--accent);background:var(--bg-card-hover);
+            transform:translateY(-6px);
+            box-shadow:0 12px 50px rgba(139,92,246,.1),0 0 60px rgba(139,92,246,.03);
+        }
+        .feature-icon {
+            font-size:34px;margin-bottom:18px;width:60px;height:60px;
+            display:flex;align-items:center;justify-content:center;
+            background:var(--accent-soft);border-radius:14px;
+            transition:all .4s;
+        }
+        .feature-card:hover .feature-icon {
+            background:rgba(139,92,246,.25);transform:scale(1.1) rotate(-5deg);
+            box-shadow:0 0 30px rgba(139,92,246,.2);
+        }
+        .feature-card h3 { font-size:18px;margin-bottom:8px; }
+        .feature-card p { color:var(--text-secondary);font-size:14px;line-height:1.7; }
+
+        /* ── Modules ─────────────────────────────────────────────────── */
+        .modules-grid { display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px; }
+        .module-tag {
+            background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-sm);
+            padding:11px 14px;text-align:center;font-size:13px;font-weight:500;
+            color:var(--text-secondary);transition:all .3s;cursor:default;
+        }
+        .module-tag:hover {
+            border-color:var(--accent);color:var(--accent-glow);background:var(--accent-soft);
+            transform:translateY(-3px);box-shadow:0 4px 20px rgba(139,92,246,.1);
+        }
+
+        /* ── Versions ────────────────────────────────────────────────── */
+        .versions-scroll {
+            display:flex;gap:10px;overflow-x:auto;padding:8px 0;
+            scrollbar-width:none;-webkit-overflow-scrolling:touch;
+        }
+        .versions-scroll::-webkit-scrollbar { display:none; }
+        .version-pill {
+            flex-shrink:0;padding:8px 18px;background:var(--surface);
+            border:1px solid var(--border);border-radius:20px;
+            font-size:13px;font-weight:500;color:var(--text-secondary);
+            transition:all .3s;
+        }
+        .version-pill:hover { border-color:var(--accent);color:var(--text); }
+        .version-pill.primary {
+            background:var(--accent-soft);border-color:var(--accent);color:var(--accent-glow);
+            animation:pillPulse 2s ease-in-out infinite;
+        }
+        @keyframes pillPulse { 0%,100%{box-shadow:0 0 0 0 rgba(139,92,246,.3);} 50%{box-shadow:0 0 0 8px rgba(139,92,246,0);} }
+
+        /* ── Download ────────────────────────────────────────────────── */
+        .download-card {
+            background:var(--bg-card);border:1px solid var(--accent);border-radius:var(--radius);
+            padding:44px;text-align:center;max-width:620px;margin:0 auto;
+            box-shadow:0 0 80px rgba(139,92,246,.08);transition:all .4s;
+            animation:downloadGlow 4s ease-in-out infinite;
+        }
+        @keyframes downloadGlow {
+            0%,100%{box-shadow:0 0 60px rgba(139,92,246,.08),0 0 0 0 rgba(139,92,246,.1);}
+            50%{box-shadow:0 0 100px rgba(139,92,246,.18),0 0 0 8px rgba(139,92,246,.02);}
+        }
+        .download-card:hover { box-shadow:0 0 100px rgba(139,92,246,.15); }
+        .download-card h3 { font-size:24px;margin-bottom:8px; }
+
+        /* ── Testimonials ────────────────────────────────────────────── */
+        .testimonials-grid { display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:24px; }
+        .testimonial-card {
+            background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);
+            padding:28px;transition:all .4s;
+        }
+        .testimonial-card:hover { border-color:var(--accent);transform:translateY(-4px);box-shadow:0 8px 40px rgba(139,92,246,.06); }
+        .testimonial-card p { color:var(--text-secondary);font-size:14px;line-height:1.7;font-style:italic;margin-bottom:20px; }
+        .testimonial-author { display:flex;align-items:center;gap:10px; }
+        .testimonial-author .avatar {
+            width:40px;height:40px;border-radius:50%;
+            background:linear-gradient(135deg,var(--accent),var(--accent-glow));
+            display:flex;align-items:center;justify-content:center;
+            font-weight:700;font-size:14px;color:white;
+        }
+        .testimonial-author .name { font-size:14px;font-weight:600; }
+        .testimonial-author .role { font-size:12px;color:var(--text-muted); }
+
+        /* ── FAQ ─────────────────────────────────────────────────────── */
+        .faq-list { max-width:700px;margin:0 auto; }
+        details {
+            background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-sm);
+            padding:18px 22px;margin-bottom:10px;cursor:pointer;transition:all .3s;
+            overflow:hidden;
+        }
+        details:hover { border-color:var(--accent); }
+        details[open] { border-color:var(--accent);background:var(--bg-card-hover); }
+        details summary {
+            font-weight:600;font-size:15px;list-style:none;
+            display:flex;justify-content:space-between;align-items:center;
+            transition:color .2s;
+        }
+        details:hover summary { color:var(--accent-glow); }
+        details summary::after {
+            content:'+';font-size:20px;color:var(--text-muted);transition:all .3s;
+        }
+        details[open] summary::after { content:'−';color:var(--accent);transform:rotate(180deg); }
+        details p { margin-top:14px;font-size:14px;color:var(--text-secondary);line-height:1.7;
+            animation:expandDown .3s ease-out; }
+        @keyframes expandDown { from{opacity:0;max-height:0;} to{opacity:1;max-height:500px;} }
+
+        /* ── Footer ──────────────────────────────────────────────────── */
+        footer {
+            border-top:1px solid var(--border);padding:48px 24px;
+            text-align:center;color:var(--text-muted);font-size:13px;
+        }
+        footer .links { display:flex;gap:24px;justify-content:center;margin-bottom:20px;flex-wrap:wrap; }
+        footer .links a { color:var(--text-secondary);text-decoration:none;transition:color .2s; }
+        footer .links a:hover { color:var(--accent); }
+
+        /* ── Scroll-to-top ───────────────────────────────────────────── */
+        .scroll-top {
+            position:fixed;bottom:30px;right:30px;z-index:99;
+            width:44px;height:44px;border-radius:50%;
+            background:var(--accent);color:white;border:none;
+            font-size:20px;cursor:pointer;opacity:0;transform:translateY(20px);
+            transition:all .3s;box-shadow:0 4px 20px rgba(139,92,246,.3);
+        }
+        .scroll-top.visible { opacity:1;transform:translateY(0); }
+        .scroll-top:hover { background:var(--accent-hover);transform:translateY(-3px); }
+
+        /* ── Responsive ──────────────────────────────────────────────── */
+        @media (max-width:768px) {
+            .nav-links { display:none; }
+            .hero { padding:120px 16px 80px; }
+            .hero h1 { font-size:36px; }
+            .hero-meta { gap:30px; }
+            .features-grid { grid-template-columns:1fr; }
+            .download-card { padding:28px; }
+        }
+    </style>
+</head>
+<body>
+
+<!-- Floating particles container -->
+<div class="particles-container" id="particles"></div>
+
+<!-- ════════════════════════════════════════════════════════════════
+     NAVBAR
+     ════════════════════════════════════════════════════════════════ -->
+<nav id="navbar">
+    <div class="nav-inner">
+        <a href="#" class="nav-logo">
+            <img src="logo.png" alt="Draxo">
+            DRAXO
+        </a>
+        <ul class="nav-links">
+            <li><a href="#features" data-i18n="nav_features">Features</a></li>
+            <li><a href="#modules" data-i18n="nav_modules">Modules</a></li>
+            <li><a href="#versions" data-i18n="nav_versions">Versions</a></li>
+            <li><a href="#download" data-i18n="nav_download">Download</a></li>
+            <li><a href="#faq" data-i18n="nav_faq">FAQ</a></li>
+            <li><a href="changelog.html" data-i18n="nav_changelog">Changelog</a></li>
+        </ul>
+        <select id="langSelect" class="lang-select" aria-label="Language">
+            <option value="en">🇬🇧 English</option>
+            <option value="de">🇩🇪 Deutsch</option>
+            <option value="es">🇪🇸 Español</option>
+            <option value="fr">🇫🇷 Français</option>
+        </select>
+        <a href="#download" class="nav-btn" data-i18n="nav_download_btn">Download</a>
+    </div>
+</nav>
+
+<!-- Scroll to top -->
+<button class="scroll-top" id="scrollTop" onclick="window.scrollTo({top:0,behavior:'smooth'})">↑</button>
+
+<!-- ════════════════════════════════════════════════════════════════
+     HERO
+     ════════════════════════════════════════════════════════════════ -->
+<section class="hero">
+    <div class="hero-content">
+        <div class="hero-badge" data-i18n="hero_badge">⚡ Undetected &amp; Premium</div>
+        <h1 data-i18n="hero_h1">The <span class="accent">Ultimate</span><br>Minecraft Client</h1>
+        <p class="hero-subtitle" id="typewriter"></p>
+        <div class="hero-buttons">
+            <a href="#download" class="btn btn-primary" data-i18n="btn_download">⬇ Download</a>
+            <a href="keygen.html" class="btn btn-secondary" data-i18n="btn_key">🔑 Get Key</a>
+            <a href="https://discord.gg/5gXXHcv6nj" class="btn btn-secondary" data-discord data-i18n="btn_discord">💬 Discord</a>
+            <span class="discord-online" id="discordOnlineHero" style="display:none;" role="status" aria-live="polite"></span>
+        </div>
+        <div class="hero-meta">
+            <div class="hero-meta-item">
+                <div class="num" data-count="49">0+</div>
+                <div class="label" data-i18n="meta_modules">Modules</div>
+            </div>
+            <div class="hero-meta-item">
+                <div class="num">99.9%</div>
+                <div class="label" data-i18n="meta_uptime">Uptime</div>
+            </div>
+            <div class="hero-meta-item">
+                <div class="num" data-count="34">0</div>
+                <div class="label" data-i18n="meta_versions">Versions</div>
+            </div>
+            <div class="hero-meta-item">
+                <div class="num">60 FPS</div>
+                <div class="label" data-i18n="meta_gui">GUI</div>
+            </div>
+            <div class="hero-meta-item">
+                <div class="num">24/7</div>
+                <div class="label" data-i18n="meta_support">Support</div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════
+     FEATURES
+     ════════════════════════════════════════════════════════════════ -->
+<section id="features">
+    <div class="section-inner">
+        <div class="section-label reveal" data-i18n="feat_label">Why Draxo</div>
+        <h2 class="section-title reveal" data-i18n="feat_title">Premium Features</h2>
+        <p class="section-subtitle reveal" data-i18n="feat_subtitle">Every detail engineered for the highest quality — from the anti-cheat engine to the GUI.</p>
+        <div class="section-divider reveal"></div>
+
+        <div class="features-grid">
+            <div class="feature-card reveal-left" style="transition-delay:.05s">
+                <div class="feature-icon">🛡️</div>
+                <h3 data-i18n="feat1_t">Undetectable Engine</h3>
+                <p data-i18n="feat1_d">Multi-layered anti-cheat bypass technology with packet scheduling, sine-wave jitter rotations and a randomization engine. Optimized for Watchdog, GrimAC, Vulcan &amp; more.</p>
+            </div>
+            <div class="feature-card reveal-scale" style="transition-delay:.1s">
+                <div class="feature-icon">🎨</div>
+                <h3 data-i18n="feat2_t">Premium GUI</h3>
+                <p data-i18n="feat2_d">Discord-style design with smooth 60 FPS animations, theme engine, customizable colors, blur/glow effects and a full HUD editor.</p>
+            </div>
+            <div class="feature-card reveal-right" style="transition-delay:.15s">
+                <div class="feature-icon">⚡</div>
+                <h3 data-i18n="feat3_t">49+ Modules</h3>
+                <p data-i18n="feat3_d">KillAura, Scaffold, ESP, Tracers, Nuker, Speed, Fly, Reach, Velocity — all with Simple/Advanced modes and custom presets.</p>
+            </div>
+            <div class="feature-card reveal-left" style="transition-delay:.2s">
+                <div class="feature-icon">🔐</div>
+                <h3 data-i18n="feat4_t">HWID License System</h3>
+                <p data-i18n="feat4_d">Uncrackable 8-layer protection with poly-XOR encryption, 3-slot consensus and runtime code integrity checks.</p>
+            </div>
+            <div class="feature-card reveal-scale" style="transition-delay:.25s">
+                <div class="feature-icon">📦</div>
+                <h3 data-i18n="feat5_t">Multi-Version</h3>
+                <p data-i18n="feat5_d">Supports every Minecraft version from 1.17 to 26.x. Automatic mapping generation — no manual updates needed.</p>
+            </div>
+            <div class="feature-card reveal-right" style="transition-delay:.3s">
+                <div class="feature-icon">🚀</div>
+                <h3 data-i18n="feat6_t">Performance</h3>
+                <p data-i18n="feat6_d">Optimized for minimal CPU/RAM usage. Lazy rendering, object pooling and efficient data structures — zero FPS loss.</p>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════
+     MODULES
+     ════════════════════════════════════════════════════════════════ -->
+<section id="modules" style="background:var(--bg-card);">
+    <div class="section-inner">
+        <div class="section-label reveal" data-i18n="mod_label">Modules</div>
+        <h2 class="section-title reveal" data-i18n="mod_title">Everything you need</h2>
+        <p class="section-subtitle reveal" data-i18n="mod_subtitle">From Combat to Movement to Visuals — every module with Simple/Advanced mode and presets.</p>
+        <div class="section-divider reveal"></div>
+
+        <h3 style="font-size:14px;color:var(--text-muted);margin-bottom:12px;text-transform:uppercase;letter-spacing:1px;" data-i18n="mod_cat_combat">⚔ Combat</h3>
+        <div class="modules-grid reveal" style="margin-bottom:28px;">
+            <span class="module-tag">KillAura</span><span class="module-tag">AimAssist</span><span class="module-tag">Reach</span><span class="module-tag">Velocity</span><span class="module-tag">AntiKB</span><span class="module-tag">TriggerBot</span><span class="module-tag">Criticals</span><span class="module-tag">Wtap</span><span class="module-tag">FakeLag</span>
+        </div>
+
+        <h3 style="font-size:14px;color:var(--text-muted);margin-bottom:12px;text-transform:uppercase;letter-spacing:1px;" data-i18n="mod_cat_movement">🏃 Movement</h3>
+        <div class="modules-grid reveal" style="margin-bottom:28px;">
+            <span class="module-tag">Speed</span><span class="module-tag">Fly</span><span class="module-tag">Scaffold</span><span class="module-tag">Step</span><span class="module-tag">Jesus</span><span class="module-tag">Dolphin</span><span class="module-tag">Glide</span><span class="module-tag">NoSlow</span><span class="module-tag">SafeWalk</span><span class="module-tag">Spider</span>
+        </div>
+
+        <h3 style="font-size:14px;color:var(--text-muted);margin-bottom:12px;text-transform:uppercase;letter-spacing:1px;" data-i18n="mod_cat_visuals">👁 Visuals</h3>
+        <div class="modules-grid reveal" style="margin-bottom:28px;">
+            <span class="module-tag">ESP</span><span class="module-tag">Tracers</span><span class="module-tag">XRay</span><span class="module-tag">FullBright</span><span class="module-tag">BreadCrumbs</span><span class="module-tag">TargetHUD</span><span class="module-tag">NoHurtCam</span><span class="module-tag">Zoom</span><span class="module-tag">FreeCam</span>
+        </div>
+
+        <h3 style="font-size:14px;color:var(--text-muted);margin-bottom:12px;text-transform:uppercase;letter-spacing:1px;" data-i18n="mod_cat_utility">🧰 Utility</h3>
+        <div class="modules-grid reveal" style="margin-bottom:28px;">
+            <span class="module-tag">Nuker</span><span class="module-tag">FastBreak</span><span class="module-tag">FastPlace</span><span class="module-tag">AutoTool</span><span class="module-tag">AutoArmor</span><span class="module-tag">AutoTotem</span><span class="module-tag">ChestStealer</span><span class="module-tag">InvMove</span><span class="module-tag">Timer</span><span class="module-tag">Disabler</span>
+        </div>
+    </div>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════
+     VERSIONS
+     ════════════════════════════════════════════════════════════════ -->
+<section id="versions">
+    <div class="section-inner">
+        <div class="section-label reveal" data-i18n="ver_label">Compatibility</div>
+        <h2 class="section-title reveal" data-i18n="ver_title">34 supported versions</h2>
+        <p class="section-subtitle reveal" data-i18n="ver_subtitle">From 1.17 to 26.x — automatic mapping generation for every version.</p>
+        <div class="section-divider reveal"></div>
+
+        <div class="versions-scroll reveal" id="versionsScroll">
+            <span class="version-pill primary"><span data-i18n="ver_latest">26.3 (latest)</span></span>
+            <span class="version-pill">26.2</span>
+            <span class="version-pill">26.1.2</span>
+            <span class="version-pill">26.1.1</span>
+            <span class="version-pill">26.1</span>
+            <span class="version-pill">1.21.11</span>
+            <span class="version-pill">1.21.10</span>
+            <span class="version-pill">1.21.9</span>
+            <span class="version-pill">1.21.8</span>
+            <span class="version-pill">1.21.7</span>
+            <span class="version-pill">1.21.6</span>
+            <span class="version-pill">1.21.5</span>
+            <span class="version-pill">1.21.4</span>
+            <span class="version-pill">1.21.3</span>
+            <span class="version-pill">1.21.2</span>
+            <span class="version-pill">1.21.1</span>
+            <span class="version-pill">1.21</span>
+            <span class="version-pill">1.20.6</span>
+            <span class="version-pill">1.20.5</span>
+            <span class="version-pill">1.20.4</span>
+            <span class="version-pill">1.20.3</span>
+            <span class="version-pill">1.20.2</span>
+            <span class="version-pill">1.20.1</span>
+            <span class="version-pill">1.20</span>
+            <span class="version-pill">1.19.4</span>
+            <span class="version-pill">1.19.3</span>
+            <span class="version-pill">1.19.2</span>
+            <span class="version-pill">1.19.1</span>
+            <span class="version-pill">1.19</span>
+            <span class="version-pill">1.18.2</span>
+            <span class="version-pill">1.18.1</span>
+            <span class="version-pill">1.18</span>
+            <span class="version-pill">1.17.1</span>
+            <span class="version-pill">1.17</span>
+        </div>
+    </div>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════
+     DOWNLOAD
+     ════════════════════════════════════════════════════════════════ -->
+<section id="download" style="background:var(--bg-card);">
+    <div class="section-inner">
+        <div class="section-label reveal" data-i18n="dl_label">Get Started</div>
+        <h2 class="section-title reveal" data-i18n="dl_title">Download &amp; Key</h2>
+        <p class="section-subtitle reveal" data-i18n="dl_subtitle">Download the launcher and get your 24h key via Linkvertise.</p>
+        <div class="section-divider reveal"></div>
+
+        <div class="hero-buttons reveal" style="margin-bottom:36px;">
+            <a href="DraxoLauncher.exe" class="btn btn-primary" style="font-size:18px;padding:16px 40px;" download data-i18n="dl_btn_exe">⬇ DraxoLauncher.exe</a>
+            <a href="keygen.html" class="btn btn-secondary" style="font-size:18px;padding:16px 40px;" data-i18n="dl_btn_key">🔑 Get Key</a>
+        </div>
+
+        <div class="download-card reveal-scale">
+            <h3 data-i18n="dl_card_title">How it works</h3>
+            <p style="color:var(--text-secondary);font-size:14px;line-height:1.9;" data-i18n="dl_steps">
+                <strong>1.</strong> Download DraxoLauncher.exe and place it in your Draxo Client folder.<br>
+                <strong>2.</strong> Start the launcher — it finds Python automatically and installs dependencies.<br>
+                <strong>3.</strong> Copy your HWID from the license card (📋 Copy).<br>
+                <strong>4.</strong> Click <a href="keygen.html" style="color:var(--accent);">Get Key</a> — complete 3 Linkvertise ads.<br>
+                <strong>5.</strong> Enter the key in the Draxo menu (CONFIG → LICENSE → Activate).<br>
+                <strong>6.</strong> Choose your Minecraft version → INJECT → all modules unlocked!
+            </p>
+            <p class="meta" style="color:var(--text-muted);font-size:13px;margin-top:20px;" data-i18n="dl_meta">🔒 24h keys are bound to your HWID • 3 ads = 1 key</p>
+        </div>
+    </div>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════
+     TESTIMONIALS
+     ════════════════════════════════════════════════════════════════ -->
+<section id="community">
+    <div class="section-inner">
+        <div class="section-label reveal" data-i18n="test_label">Community</div>
+        <h2 class="section-title reveal" data-i18n="test_title">What players say</h2>
+        <p class="section-subtitle reveal" data-i18n="test_subtitle">Draxo is used daily by hundreds of players on Minemen, Flamefrags &amp; Hypixel.</p>
+        <div class="section-divider reveal"></div>
+
+        <div class="testimonials-grid">
+            <div class="testimonial-card reveal-left" style="transition-delay:.05s">
+                <p data-i18n="test1_q">"The best client I've ever used. The KillAura is so smooth that even experienced staff don't notice. And the GUI looks like Discord — simply premium."</p>
+                <div class="testimonial-author"><div class="avatar">M</div><div><div class="name" data-i18n="test1_name">Minemen Player</div><div class="role" data-i18n="test1_role">Playing since v1.0</div></div></div>
+            </div>
+            <div class="testimonial-card reveal-scale" style="transition-delay:.15s">
+                <p data-i18n="test2_q">"Finally a client that doesn't get instantly kicked on Flamefrags. The Watchdog bypass is no empty promise — the sine-wave jitter rotation is genius."</p>
+                <div class="testimonial-author"><div class="avatar">F</div><div><div class="name" data-i18n="test2_name">Flamefrags Player</div><div class="role" data-i18n="test2_role">Diamond Division</div></div></div>
+            </div>
+            <div class="testimonial-card reveal-right" style="transition-delay:.25s">
+                <p data-i18n="test3_q">"Multi-version support is a game changer. I play 1.8 on Minemen and 1.21 on Hypixel with the same client — everything works out of the box."</p>
+                <div class="testimonial-author"><div class="avatar">H</div><div><div class="name" data-i18n="test3_name">Multi-Version Player</div><div class="role" data-i18n="test3_role">1.8 &amp; 1.21 Main</div></div></div>
+            </div>
+        </div>
+
+        <div class="discord-cta reveal">
+            <div class="dc-icon">💬</div>
+            <h3 data-i18n="discord_cta_title">Join the Community</h3>
+            <p data-i18n="discord_cta_text">Updates, support and giveaways — meet the Draxo community on Discord.</p>
+            <div class="dc-actions">
+                <a href="https://discord.gg/5gXXHcv6nj" class="btn btn-primary" data-discord data-i18n="discord_join">Join Discord</a>
+                <span class="discord-online" id="discordOnlineCta" style="display:none;" role="status" aria-live="polite"></span>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════
+     FAQ
+     ════════════════════════════════════════════════════════════════ -->
+<section id="faq" style="background:var(--bg-card);">
+    <div class="section-inner">
+        <div class="section-label reveal" data-i18n="faq_label">FAQ</div>
+        <h2 class="section-title reveal" data-i18n="faq_title">Frequently asked questions</h2>
+        <p class="section-subtitle reveal" data-i18n="faq_subtitle">Everything you need to know about Draxo.</p>
+        <div class="section-divider reveal"></div>
+
+        <div class="faq-list">
+            <details class="reveal"><summary data-i18n="faq1_q">Is Draxo really undetected?</summary>
+                <p data-i18n="faq1_a">Draxo uses a multi-layered anti-cheat engine with packet scheduling, sine-wave jitter rotations, a randomization engine and position-based micro offsets. We regularly test against Watchdog (Hypixel), GrimAC, Vulcan and Spartan. <strong>No cheat is 100% undetectable</strong> — use Draxo responsibly and avoid obvious rage settings on servers with active staff.</p></details>
+            <details class="reveal"><summary data-i18n="faq2_q">How do I get a key?</summary>
+                <p data-i18n="faq2_a">Visit the <a href="keygen.html" style="color:var(--accent);">keygen page</a>, enter your HWID (copy it from the launcher: 📋 Copy), complete 3 short Linkvertise ads and receive your 24h key. The key is bound to your hardware (HWID-locked).</p></details>
+            <details class="reveal"><summary data-i18n="faq3_q">Which Minecraft versions are supported?</summary>
+                <p data-i18n="faq3_a">Draxo supports <strong>all versions from 1.17 to 26.x</strong>. The built-in mapping generator automatically creates the correct mappings for your version. That's 34 versions in total.</p></details>
+            <details class="reveal"><summary data-i18n="faq4_q">How does the installation work?</summary>
+                <p data-i18n="faq4_a">Download DraxoLauncher.exe and place it in any folder. The launcher automatically finds Python, installs dependencies and injects the DLL into Minecraft. No complicated configuration needed.</p></details>
+            <details class="reveal"><summary data-i18n="faq5_q">Can I play on Hypixel with my main account?</summary>
+                <p data-i18n="faq5_a"><strong>We strongly advise to never cheat on your main account.</strong> Use an alt account or test on servers like Minemen.club or Flamefrags.gg that are more tolerant towards clients. Hypixel bans permanently on detection.</p></details>
+            <details class="reveal"><summary data-i18n="faq6_q">What is the Simple/Advanced mode?</summary>
+                <p data-i18n="faq6_a">In <strong>Simple mode</strong>, every module has only 2 presets: Legit (safe, subtle) and Rage (maximum effect). Perfect for beginners. <strong>Advanced mode</strong> gives you full control over timing, range, jitter and all other parameters — for experienced users.</p></details>
+            <details class="reveal"><summary data-i18n="faq7_q">My key doesn't work — what should I do?</summary>
+                <p data-i18n="faq7_a">The most common cause is a <strong>wrong HWID</strong>: the key is hard-bound to the HWID of your machine, which you see in the Draxo launcher (📋 Copy). Always use the exact same HWID in the keygen — not one from an old draxo_config.ini or another PC. Other causes: the key is <strong>expired</strong> (24h), your <strong>system clock</strong> is wrong, or you generated a second key for the same HWID (rate limit). First check that the HWID matches exactly (32 characters, uppercase). If activation still fails, check the <strong>support box</strong> on the keygen page — it links to our Discord, where we fix HWID issues within minutes.</p></details>
+        </div>
+    </div>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════
+     FOOTER
+     ════════════════════════════════════════════════════════════════ -->
+<footer>
+    <div class="links">
+        <a href="index.html" data-i18n="footer_home">Home</a><a href="#features" data-i18n="footer_features">Features</a><a href="#download" data-i18n="footer_download">Download</a>
+        <a href="keygen.html" data-i18n="footer_keygen">Keygen</a><a href="changelog.html" data-i18n="footer_changelog">Changelog</a><a href="https://discord.gg/5gXXHcv6nj" data-discord data-i18n="footer_discord">Discord</a><a href="legal.html" data-i18n="footer_legal">Legal</a>
+    </div>
+    <p data-i18n="footer_copyright">© 2026 Draxo Client · batotomato · All rights reserved.</p>
+    <p style="font-size:11px;margin-top:8px;color:var(--text-muted);" data-i18n="footer_disclaimer">Draxo is a third-party utility and is not affiliated with Mojang or Microsoft.</p>
+</footer>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════════
+   DRAXO CLIENT — Animation Engine
+   ═══════════════════════════════════════════════════════════════════ */
+
+// ── Floating Particles ────────────────────────────────────────────
+(function initParticles(){
+    const container=document.getElementById('particles');
+    const colors=['rgba(139,92,246,.4)','rgba(192,132,252,.3)','rgba(139,92,246,.2)','rgba(168,85,247,.25)'];
+    for(let i=0;i<30;i++){
+        const p=document.createElement('div');
+        p.classList.add('particle');
+        const size=Math.random()*4+2;
+        p.style.width=size+'px';p.style.height=size+'px';
+        p.style.left=Math.random()*100+'%';
+        p.style.background=colors[Math.floor(Math.random()*colors.length)];
+        p.style.animationDuration=(Math.random()*12+8)+'s';
+        p.style.animationDelay=(Math.random()*8)+'s';
+        container.appendChild(p);
+    }
+})();
+
+// ── Typewriter Effect (multilingual) ──────────────────────────────
+let twTimer=null;
+function startTypewriter(){
+    const phrases=window.DraxoI18N.phrases();
+    let pi=0,ci=0,deleting=false;
+    const el=document.getElementById('typewriter');
+    if(!el)return;
+    if(twTimer)clearTimeout(twTimer);
+    function tick(){
+        const phrase=phrases[pi];
+        if(!deleting){
+            el.innerHTML=phrase.substring(0,ci)+'<span class="tw-cursor"></span>';
+            ci++;
+            if(ci>phrase.length){ deleting=true;twTimer=setTimeout(tick,2500);return; }
+            twTimer=setTimeout(tick,40+Math.random()*30);
+        }else{
+            el.innerHTML=phrase.substring(0,ci)+'<span class="tw-cursor"></span>';
+            ci--;
+            if(ci<0){ deleting=false;pi=(pi+1)%phrases.length;ci=0;twTimer=setTimeout(tick,400);return; }
+            twTimer=setTimeout(tick,20);
+        }
+    }
+    tick();
+}
+
+// ── Discord live online counter ───────────────────────────────────
+// Handled centrally in i18n.js (startDiscordStatus / renderDiscordCounters)
+// so every page — index, changelog, keygen — shares one poller and one
+// source of truth. Nothing to do here.
+
+// Re-render dynamic parts when the language changes (counter re-renders
+// automatically via i18n.js apply())
+window.i18nOnChange=function(){ startTypewriter(); };
+
+// ── Counter Animation ─────────────────────────────────────────────
+(function counters(){
+    const items=document.querySelectorAll('.hero-meta-item .num[data-count]');
+    const observer=new IntersectionObserver(function(entries){
+        entries.forEach(function(entry){
+            if(!entry.isIntersecting)return;
+            const el=entry.target;
+            const target=parseInt(el.getAttribute('data-count'));
+            const suffix=(el.textContent||'').match(/[+%]|[a-zA-Z]+/g)?.[0]||'';
+            let current=0;
+            const step=Math.ceil(target/40);
+            const timer=setInterval(function(){
+                current+=step;
+                if(current>=target){current=target;clearInterval(timer);}
+                el.textContent=current+suffix;
+            },30);
+            observer.unobserve(el);
+        });
+    },{threshold:.5});
+    items.forEach(function(el){observer.observe(el);});
+})();
+
+// ── Scroll Reveal (Intersection Observer) ─────────────────────────
+(function scrollReveal(){
+    const observer=new IntersectionObserver(function(entries){
+        entries.forEach(function(entry){
+            if(entry.isIntersecting){
+                entry.target.classList.add('visible');
+                observer.unobserve(entry.target);
+            }
+        });
+    },{threshold:.12,rootMargin:'0px 0px -30px 0px'});
+    document.querySelectorAll('.reveal,.reveal-left,.reveal-right,.reveal-scale').forEach(function(el){
+        observer.observe(el);
+    });
+})();
+
+// ── Navbar Scroll Effect ──────────────────────────────────────────
+(function navbarScroll(){
+    const nav=document.getElementById('navbar');
+    let lastScroll=0;
+    window.addEventListener('scroll',function(){
+        const now=window.scrollY;
+        if(now>80)nav.classList.add('scrolled');else nav.classList.remove('scrolled');
+        if(now>lastScroll&&now>200)nav.classList.add('hidden');
+        else nav.classList.remove('hidden');
+        lastScroll=now;
+    },{passive:true});
+})();
+
+// ── Scroll-to-top Button ──────────────────────────────────────────
+(function scrollTopBtn(){
+    const btn=document.getElementById('scrollTop');
+    window.addEventListener('scroll',function(){
+        if(window.scrollY>600)btn.classList.add('visible');else btn.classList.remove('visible');
+    },{passive:true});
+})();
+
+// ── Version Pills Auto-Scroll ─────────────────────────────────────
+(function autoScrollVersions(){
+    const scroll=document.getElementById('versionsScroll');
+    if(!scroll)return;
+    let dir=1,pos=0;
+    setInterval(function(){
+        pos+=dir*.4;
+        if(pos>scroll.scrollWidth-scroll.clientWidth){dir=-1;}
+        if(pos<0){dir=1;}
+        scroll.scrollLeft=pos;
+    },40);
+})();
+
+// ── Parallax on Hero ──────────────────────────────────────────────
+(function parallax(){
+    window.addEventListener('scroll',function(){
+        const scrolled=window.scrollY;
+        const hero=document.querySelector('.hero');
+        if(!hero)return;
+        hero.style.transform='translateY('+(scrolled*.15)+'px)';
+        const content=hero.querySelector('.hero-content');
+        if(content)content.style.transform='translateY('+(scrolled*.05)+'px)';
+    },{passive:true});
+})();
+</script>
+
+</body>
+</html>

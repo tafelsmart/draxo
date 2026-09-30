@@ -40,10 +40,10 @@ class DraxoLauncherApp:
         self._logger.info("Draxo Client startet …")
 
         try:
-            import customtkinter as ctk
             from animations import WindowFadeIn
             from bootstrap import BootstrapWindow
             from config import ConfigManager
+            from discord_auth import DiscordSession
             from updater import UpdateDialog
             from ui import MainWindow
 
@@ -59,8 +59,14 @@ class DraxoLauncherApp:
             # ── Konfiguration laden ────────────────────────────────────────
             cfg = ConfigManager()
 
+            # ── Discord-Sitzung ────────────────────────────────────────────
+            # Wird hier einmal erzeugt und sowohl dem Anmeldefenster als
+            # auch dem Haupt-Fenster uebergeben — sonst waeren das zwei
+            # getrennte Anmeldungen mit zwei Token-Dateien.
+            session = DiscordSession()
+
             # ── Haupt-Fenster erstellen (noch unsichtbar) ──────────────────
-            win = MainWindow(config_manager=cfg)
+            win = MainWindow(config_manager=cfg, session=session)
             win.withdraw()        # komplett versteckt
             win.attributes("-alpha", 0.0)
 
@@ -91,6 +97,7 @@ class DraxoLauncherApp:
                 config_manager=cfg,
                 on_ready=on_ready,
                 on_update_found=on_update_found,
+                session=session,
             )
 
             win.mainloop()

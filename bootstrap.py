@@ -25,13 +25,12 @@ from pathlib import Path
 from typing import Optional
 
 import customtkinter as ctk
-from PIL import Image
 
 from animations import WindowFadeIn
 from config import ConfigManager
 from setup_manager import SetupManager
 from styles import COLORS, FONTS, LAYOUT
-from updater import UpdateDialog, UpdateInfo, Updater
+from updater import UpdateInfo, Updater
 from utils import find_python_executable, load_image_safe, resource_path
 
 logger = logging.getLogger("DraxoClient.bootstrap")
@@ -44,7 +43,8 @@ STEPS: list[tuple[str, float]] = [
     ("Suche nach Updates …",           0.20),
     ("Suche Python-Installation …",    0.45),
     ("Installiere Abhängigkeiten …",   0.65),
-    ("Starte Launcher …",              0.92),
+    ("Anmelden …",                     0.92),
+    ("Starte Launcher …",              0.98),
 ]
 
 
@@ -58,6 +58,7 @@ class BootstrapMessage:
         progress: Optional[float] = None,
         update_info: Optional[UpdateInfo] = None,
         launch: bool = False,
+        login: bool = False,
         error: Optional[str] = None,
     ) -> None:
         self.step_index = step_index
@@ -65,6 +66,7 @@ class BootstrapMessage:
         self.progress = progress
         self.update_info = update_info
         self.launch = launch
+        self.login = login
         self.error = error
 
 
@@ -86,16 +88,22 @@ class BootstrapWindow(ctk.CTkToplevel):
         config_manager: ConfigManager,
         on_ready: object,
         on_update_found: object,
+        session: Optional[object] = None,
     ) -> None:
         super().__init__(parent)
         self._parent = parent
         self._cfg = config_manager
         self._on_ready = on_ready
         self._on_update_found = on_update_found
+        # DiscordSession — wird nachgefuehrt, damit Hauptfenster und
+        # Anmeldefenster dieselbe Anmeldung teilen.
+        self._session = session
+        self._login_window: Optional[object] = None
         self._msg_queue: "queue.Queue[BootstrapMessage]" = queue.Queue()
         self._progress_target: float = 0.0
         self._progress_current: float = 0.0
         self._launch_pending: bool = False
+        self._login_pending: bool = False
         self._update_info: Optional[UpdateInfo] = None
 
         self._configure_window()
@@ -143,7 +151,9 @@ class BootstrapWindow(ctk.CTkToplevel):
         # ── Äußerer Rahmen mit Glow-Border ────────────────────────────────
         outer = ctk.CTkFrame(
             self,
-            fg_color=COLORS.SECONDARY,
+            # Im neuen Farbschema heisst die Panel-Farbe SURFACE;
+            # SECONDARY gibt es seit dem Umbau nicht mehr.
+            fg_color=COLORS.SURFACE,
             corner_radius=LAYOUT.CORNER_RADIUS_LARGE,
             border_width=1,
             border_color=COLORS.ACCENT,
@@ -311,7 +321,27 @@ class BootstrapWindow(ctk.CTkToplevel):
 
         time.sleep(0.3)
 
-        # ── Fertig: Haupt-Fenster starten ──────────────────────────────────
+        # ── Schritt 5: Discord-Anmeldung ───────────────────────────────────
+        # Eine gespeicherte Anmeldung wird still wiederhergestellt (das
+        # kann Netz brauchen, deshalb im Thread). Nur wenn danach niemand
+        # angemeldet ist, erscheint das Anmeldefenster.
+        needs_login = True
+        session = self._session
+        if session is not None:
+            try:
+                needs_login = not session.restore()
+            except Exception:  # noqa: BLE001
+                logger.exception("Wiederherstellen der Anmeldung fehlgeschlagen.")
+                needs_login = True
+
+        if needs_login:
+            self._post_log("Keine Anmeldung gefunden — Anmeldung erforderlich.",
+                           "warning")
+            self._post(step_index=4, progress=STEPS[4][1], login=True)
+            # Ab hier entscheidet der GUI-Thread, wann es weitergeht.
+            return
+
+        self._post_log("Angemeldet.", "success")
         self._post(launch=True, progress=1.0)
 
     # ── Queue-Kommunikation ───────────────────────────────────────────────────
@@ -323,6 +353,7 @@ class BootstrapWindow(ctk.CTkToplevel):
         log_line: Optional[tuple[str, str]] = None,
         update_info: Optional[UpdateInfo] = None,
         launch: bool = False,
+        login: bool = False,
         error: Optional[str] = None,
     ) -> None:
         self._msg_queue.put(
@@ -332,6 +363,7 @@ class BootstrapWindow(ctk.CTkToplevel):
                 log_line=log_line,
                 update_info=update_info,
                 launch=launch,
+                login=login,
                 error=error,
             )
         )
@@ -350,7 +382,7 @@ class BootstrapWindow(ctk.CTkToplevel):
         except Exception:  # noqa: BLE001
             logger.exception("Fehler beim Verarbeiten der Bootstrap-Queue.")
         finally:
-            if not self._launch_pending:
+            if not self._launch_pending and not self._login_pending:
                 self.after(FRAME_MS, self._poll_queue)
 
     def _handle_message(self, msg: BootstrapMessage) -> None:
@@ -375,10 +407,68 @@ class BootstrapWindow(ctk.CTkToplevel):
         if msg.error is not None:
             self._status_label.configure(text=f"❌ {msg.error}", text_color=COLORS.ERROR)
 
+        if msg.login:
+            self._login_pending = True
+            self._open_login()
+            return
+
         if msg.launch:
             self._launch_pending = True
             # Noch letzte Queue-Nachrichten leeren, dann launchen
             self.after(350, self._do_launch)
+
+    def _open_login(self) -> None:
+        """Zeigt das Discord-Anmeldefenster.
+
+        Der Splash wird ausgeblendet, das Anmeldefenster uebernimmt. Erst
+        wenn dort eine Anmeldung durchgelaufen ist (oder der Nutzer
+        bewusst abbricht), geht es mit ``_do_launch`` weiter.
+        """
+        try:
+            self.withdraw()
+        except Exception:  # noqa: BLE001
+            pass
+
+        from auth_ui import WelcomeWindow
+        from discord_auth import DiscordSession
+
+        session = self._session or DiscordSession()
+
+        def on_success(_result) -> None:
+            logger.info("Anmeldung abgeschlossen: %s", session.display_name)
+            self._login_window = None
+            self._login_pending = False
+            try:
+                self.deiconify()
+            except Exception:  # noqa: BLE001
+                pass
+            self._append_log(f"Angemeldet als {session.display_name}", "success")
+            self._progress_target = 1.0
+            self.after(220, self._do_launch)
+
+        def on_cancel() -> None:
+            self._login_window = None
+            self._login_pending = False
+            logger.info("Anmeldung uebersprungen — Injektion bleibt gesperrt.")
+            try:
+                self.deiconify()
+            except Exception:  # noqa: BLE001
+                pass
+            self._append_log(
+                "Nicht angemeldet — die Injektion bleibt gesperrt.", "warning")
+            self._progress_target = 1.0
+            self.after(220, self._do_launch)
+
+        try:
+            self._login_window = WelcomeWindow(
+                parent=self, session=session,
+                on_success=on_success, on_cancel=on_cancel,
+            )
+            logger.info("Anmeldefenster geoeffnet.")
+        except Exception:  # noqa: BLE001
+            logger.exception("Anmeldefenster konnte nicht geoeffnet werden.")
+            self._login_pending = False
+            self.after(150, self._do_launch)
 
     def _do_launch(self) -> None:
         """Schließt das Bootstrap-Fenster und öffnet das Haupt-Fenster."""

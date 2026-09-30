@@ -1,29 +1,39 @@
 """
 license_manager.py
 -------------------
-Launcher-side license validation. Reads the Draxo DLL config
-(build/vanilla/Release/draxo_config.ini) and validates the stored
-license key using the EXACT same poly-XOR / Crockford Base32 algorithm
-as the C++ DLL (src/core/auth.cpp).
+Launcher-side license validation.
 
-This means the launcher can show:
-  - License status (ACTIVE / EXPIRED / LOCKED / NO_KEY)
-  - Expiry date
-  - HWID (for copying into the Linkvertise flow)
+Bis v1.2 lag hier ein symmetrisches 32-Byte-Geheimnis, das dieselbe
+Pruef-Logik wie die DLL und die Web-Keygen-Seite nachbildete. Damit
+konnte jeder offline Keys erzeugen — "gehaertet" war nur die DLL
+selbst, nicht das Format.
 
-Without needing the DLL to be injected first.
+Ab v2 laeuft alles ueber asymmetrische Ed25519-Grants:
 
-NOTE: This is the root-level copy used by the packaged DraxoLauncher.exe.
-The algorithm MUST stay byte-identical with the C++ DLL - any change here
-that diverges from src/core/auth.cpp breaks key validation.
+  * Erzeugt werden sie ausschliesslich vom Discord-Bot auf dem Server
+    (draxo_bot.signing), der den privaten Schluessel besitzt.
+  * Geprueft werden sie hier mit dem oeffentlichen Schluessel aus
+    license_signing.SERVER_PUBLIC_KEY_HEX. Pruefen braucht kein
+    Geheimnis, also ist hier auch keines mehr.
+  * Online-Abfrage beim Bot (verify_online) klärt zusaetzlich, ob der
+    Grant noch gilt — offline laesst sich ein Grant nur ablaufen,
+    nicht widerrufen.
+
+Das hier ist die Python-Seite. Die DLL prueft dieselben Grants in
+src/core/auth.cpp mit derselben Schluessel-Nutzlast.
 """
 
 import hashlib
+import json
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
+
+import license_signing as grants
 
 # Paths - resolve the project root the same way the rest of the launcher
 # does (see utils.get_workdir): when frozen by PyInstaller the .exe sits in
@@ -42,20 +52,6 @@ _PROJECT_DIR = get_workdir()
 _DLL_DIR = _PROJECT_DIR / "build" / "vanilla" / "Release"
 _CONFIG_FILE = _DLL_DIR / "draxo_config.ini"
 
-# Split secret (mirrors C++ _sa/_sb/_sc/_sd + _sx)
-_SA = [0xD4, 0x7B, 0x0E, 0x28, 0x13, 0x9C, 0xDF, 0x69]
-_SB = [0x1A, 0xE2, 0x6D, 0x47, 0x86, 0x71, 0x36, 0xF5]
-_SC = [0x8F, 0x55, 0xA3, 0xC9, 0x2D, 0xB0, 0xE8, 0xAB]
-_SD = [0x3C, 0x91, 0xBF, 0xFA, 0x5E, 0x44, 0x0A, 0x12]
-_SX = [0xA3, 0x5C, 0xF1, 0x7E]
-
-# Crockford Base32 alphabet (mirrors C++)
-_B32 = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
-# Decode table A..Z (mirrors C++ T[26])
-_T = [10, 11, 12, 13, 14, 15, 16, 17, 1, 18, 19, 1, 20, 21, 0,
-      22, 23, 24, 25, 26, 27, 27, 28, 29, 30, 31]
-
-
 @dataclass
 class LicenseStatus:
     status: str          # "ACTIVE", "EXPIRED", "LOCKED", "NO_KEY"
@@ -65,86 +61,86 @@ class LicenseStatus:
     key_preview: str     # first 15 chars of stored key (or "")
 
 
-# Crypto primitives (mirror C++ exactly)
-
-def _recon_secret() -> bytes:
-    """Reconstruct 32-byte secret deterministically (mirrors C++ _recon)."""
-    out = bytearray(32)
-    for i in range(8):
-        out[i * 4 + 0] = (_SA[i] ^ ((_SX[0] + i) & 0xFF)) & 0xFF
-        out[i * 4 + 1] = (_SB[i] ^ ((_SX[1] + i) & 0xFF)) & 0xFF
-        out[i * 4 + 2] = (_SC[i] ^ ((_SX[2] + i) & 0xFF)) & 0xFF
-        out[i * 4 + 3] = (_SD[i] ^ ((_SX[3] + i) & 0xFF)) & 0xFF
-    return bytes(out)
+# Grant-Pruefung
+# ==============
+# Alles Kryptografische liegt in license_signing.py — eine Datei, die
+# auch der Server benutzt. Hier steht bewusst kein Schluesselmaterial.
 
 
-def _poly_xor_inv(data: bytes, key: bytes) -> bytes:
-    """Inverse of poly-XOR (mirrors C++ _polyXorInv). NOT self-inverse."""
-    prev = 0x7B
-    out = bytearray(len(data))
-    klen = len(key)
-    for i in range(len(data)):
-        c = data[i]
-        k = key[i % klen]
-        p = (c ^ k ^ key[(i + 7) % klen] ^ (i & 0xFF) ^ prev) & 0xFF
-        out[i] = p
-        prev = c
-    return bytes(out)
+def _validate_grant(key: str, hwid: str, discord_id: int | None = None) -> tuple:
+    """Prueft einen Grant gegen HWID und optional gegen das Discord-Konto.
+
+    Rueckgabe bleibt (is_valid, expiry_unix), damit die Aufrufer von
+    frueher unveraendert bleiben koennen.
+    """
+    grant = grants.verify_grant(key, hwid=hwid, discord_id=discord_id)
+    return grant.valid, grant.expires_at
 
 
-def _b32_decode(text: str) -> bytes:
-    """Crockford Base32 decode (mirrors C++ b32dec)."""
-    bits = 0
-    bc = 0
-    out = bytearray()
-    for ch in text.upper():
-        if ch == "-":
-            continue
-        if "0" <= ch <= "9":
-            v = ord(ch) - 48
-        elif "A" <= ch <= "Z":
-            v = _T[ord(ch) - 65]
-        else:
-            continue
-        bits = (bits << 5) | v
-        bc += 5
-        while bc >= 8:
-            bc -= 8
-            out.append((bits >> bc) & 0xFF)
-    return bytes(out)
+def grant_detail(
+    key: str,
+    hwid: str = "",
+    discord_id: int | None = None,
+    now: float | None = None,
+) -> grants.Grant:
+    """Prueft und liefert das volle Ergebnis inkl. Begruendung."""
+    return grants.verify_grant(key, hwid=hwid or None, discord_id=discord_id, now=now)
 
 
-def _validate_key(key: str, hwid: str) -> tuple:
-    """Validate a Draxo license key against an HWID.
-    Returns (is_valid, expiry_unix). expiry_unix=0 means permanent."""
-    if not key or not hwid:
-        return False, 0
-    b = key.upper().replace("-", "").replace(" ", "")
-    if b.startswith("DRAXO"):
-        b = b[5:]
-    is_v2 = len(b) >= 26
-    plen = 16 if is_v2 else 12
-    if len(b) < (26 if is_v2 else 20):
-        return False, 0
-    b = b[:26] if is_v2 else b[:20]
+def _server_url() -> str:
+    """Endpunkt des Bots. Leer lassen heisst: nur offline pruefen."""
+    import os
 
-    enc = _b32_decode(b)
-    if len(enc) != plen:
-        return False, 0
+    return (os.environ.get("DRAXO_LICENSE_API", "") or "").rstrip("/")
 
-    sec = _recon_secret()
-    dec = _poly_xor_inv(enc, sec)
 
-    hwid_hash = hashlib.sha256(hwid.encode()).digest()
-    if dec[:12] != hwid_hash[:12]:
-        return False, 0
+def verify_online(
+    key: str,
+    *,
+    hwid: str = "",
+    discord_id: int | None = None,
+    api_token: str = "",
+    timeout: float = 5.0,
+) -> tuple[bool, str]:
+    """Fragt den Bot, ob der Grant noch gilt.
 
-    if is_v2:
-        expiry = (dec[12] << 24) | (dec[13] << 16) | (dec[14] << 8) | dec[15]
-    else:
-        expiry = 0
+    Das ist der einzige Weg zu einem sofortigen Widerruf — offline kann
+    ein Grant nur auslaufen. Ohne konfigurierte URL wird das nicht
+    versucht und der Aufrufer entscheidet selbst.
 
-    return True, expiry
+    Rueckgabe: (verstanden, hinweis). Bei jedem Netzfehler wird False
+    geliefert, mit einem Klartext, warum — ein stilles Scheitern waere
+    hier gefaehrlich, weil es wie ein gueltiger Grant aussieht.
+    """
+    url = _server_url()
+    if not url:
+        return False, "Kein Lizenzserver konfiguriert (DRAXO_LICENSE_API)."
+
+    body = json.dumps(
+        {"grant": key, "hwid": hwid, "discord_id": discord_id}
+    ).encode()
+    headers = {"Content-Type": "application/json", "User-Agent": "DraxoLauncher"}
+    if api_token:
+        headers["Authorization"] = f"Bearer {api_token}"
+
+    request = urllib.request.Request(
+        url + "/api/v1/verify", data=body, headers=headers, method="POST"
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            payload = json.load(response)
+    except urllib.error.HTTPError as exc:
+        try:
+            payload = json.load(exc)
+        except Exception:
+            payload = {}
+        return False, payload.get("reason") or f"Server antwortet mit HTTP {exc.code}."
+    except urllib.error.URLError as exc:
+        return False, f"Server nicht erreichbar ({exc.reason})."
+    except Exception as exc:  # noqa: BLE001
+        return False, f"Server-Antwort unlesbar ({exc})."
+
+    return bool(payload.get("ok")), payload.get("reason") or "keine Angabe"
 
 
 # Config readers
@@ -235,13 +231,17 @@ def get_license_status() -> LicenseStatus:
             key_preview="",
         )
 
-    is_valid, expiry_unix = _validate_key(key, hwid)
+    grant = grant_detail(key, hwid=hwid)
+    is_valid = grant.valid
+    expiry_unix = grant.expires_at
 
     if not is_valid:
         return LicenseStatus(
             status="LOCKED",
             status_color="#ff4757",
-            expiry_str="-",
+            # Nicht nur "—": der Grund entscheidet, ob der Nutzer sein
+            # Discord-Konto, den Rechner oder den Key pruefen muss.
+            expiry_str=grant.reason,
             hwid=hwid,
             key_preview=key[:15] + "..." if len(key) > 15 else key,
         )

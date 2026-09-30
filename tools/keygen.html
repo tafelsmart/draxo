@@ -78,23 +78,43 @@ const LINKVERTISE_LINKS=[
     'https://linkvertise.com/6255141/BaT3NYhzY2vK?hwid={HWID}',
 ];
 const KEY_HOURS=24;
-const B32='0123456789ABCDEFGHJKMNPQRSTVWXYZ';
-const SA=[0xD4,0x7B,0x0E,0x28,0x13,0x9C,0xDF,0x69],SB=[0x1A,0xE2,0x6D,0x47,0x86,0x71,0x36,0xF5],SC=[0x8F,0x55,0xA3,0xC9,0x2D,0xB0,0xE8,0xAB],SD=[0x3C,0x91,0xBF,0xFA,0x5E,0x44,0x0A,0x12],SX=[0xA3,0x5C,0xF1,0x7E];
+/* ══════════════════════════════════════════════════════════════════════
+   BROWSER-KEYGEN ENTFERNT (v2)
+   ──────────────────────────────────────────────────────────────────────
+   Bis hier lief die komplette Schluessel-Erzeugung im Browser: ein
+   32-Byte-Geheimnis wurde aus vier Byte-Tabellen rekonstruiert und
+   damit offline beliebige Keys erzeugt. Wer den Quelltext las, hatte
+   unbegrenzt gueltige Keys — ohne Anmeldung und ohne Werbung.
 
-function recon(){let o=new Uint8Array(32);for(let i=0;i<8;i++){o[i*4]=SA[i]^((SX[0]+i)&0xFF);o[i*4+1]=SB[i]^((SX[1]+i)&0xFF);o[i*4+2]=SC[i]^((SX[2]+i)&0xFF);o[i*4+3]=SD[i]^((SX[3]+i)&0xFF)}return o}
-function fwd(d,k){let o=new Uint8Array(d.length),p=0x7B;for(let i=0;i<d.length;i++){let kk=k[i%k.length];o[i]=(d[i]^kk^p^k[(i+7)%k.length]^(i&0xFF))&0xFF;p=o[i]}return o}
-function b32e(d){let b=0,c=0,o='';for(let i=0;i<d.length;i++){b=(b<<8)|d[i];c+=8;while(c>=5){c-=5;o+=B32[(b>>c)&0x1F]}}if(c>0)o+=B32[(b<<(5-c))&0x1F];return o}
-async function sha(v){return new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(v)))}
-async function gen(hwid,h){let hs=await sha(hwid),now=Math.floor(Date.now()/1000),exp=h>0?(now+h*3600):0,p=new Uint8Array(16);for(let i=0;i<12;i++)p[i]=hs[i];p[12]=(exp>>>24)&0xFF;p[13]=(exp>>>16)&0xFF;p[14]=(exp>>>8)&0xFF;p[15]=exp&0xFF;let x=b32e(fwd(p,recon()));while(x.length<26)x+='0';x=x.substring(0,26);return'DRAXO-'+x.substring(0,5)+'-'+x.substring(5,10)+'-'+x.substring(10,15)+'-'+x.substring(15,20)+'-'+x.substring(20,25)+'-'+x.substring(25,26)}
-async function sc(){let e='DRAXO-5YQZZ-4VAK1-8FJGN-XTDDG-A9076-M';let g=await gen('0123456789ABCDEF0123456789ABCDEF',0);return[g===e,g]}
-function rl(h){try{let d=JSON.parse(localStorage.getItem('dkr')||'{}');if(d[h]&&Date.now()-d[h]<864e5)return!1;return!0}catch(e){return!0}}
-function rr(h){try{let d=JSON.parse(localStorage.getItem('dkr')||'{}');d[h]=Date.now();localStorage.setItem('dkr',JSON.stringify(d))}catch(e){}}
-let chw='';
-function onHwidInput(){let v=document.getElementById('hwid').value.replace(/[^0-9A-Fa-f]/g,'').toUpperCase();document.getElementById('hwid').value=v;let h=document.getElementById('hwid-hint');if(v.length===32){h.innerHTML='Valid HWID';h.style.color='#2ed573';showAds(v)}else if(v.length>0){h.innerHTML='Need 32 chars (currently '+v.length+')';h.style.color='#ffa502';document.getElementById('step-ads').classList.add('hidden');document.getElementById('step-result').classList.add('hidden')}else{h.innerHTML='';document.getElementById('step-ads').classList.add('hidden');document.getElementById('step-result').classList.add('hidden')}}
-function showAds(h){chw=h;let s='';for(let i=0;i<LINKVERTISE_LINKS.length;i++)s+='<div class="step"><div class="step-num">'+(i+1)+'</div><div class="step-info"><strong>Ad '+(i+1)+'</strong><span class="step-badge">Linkvertise</span><br><a class="step-link" href="'+LINKVERTISE_LINKS[i].replace('{HWID}',h)+'" target="_blank" rel="noopener">Open Ad '+(i+1)+'</a></div></div>';document.getElementById('ad-steps').innerHTML=s||'<div class="alert alert-warn">No Linkvertise links configured. Edit LINKVERTISE_LINKS in page source.</div>';document.getElementById('step-ads').classList.remove('hidden');document.getElementById('step-result').classList.add('hidden')}
-async function generate(){if(!chw||chw.length!==32)return;if(!rl(chw)){document.getElementById('rate-limit-msg').innerHTML='Rate limit: 1 key per HWID per 24h';document.getElementById('rate-limit-msg').classList.remove('hidden');return}document.getElementById('rate-limit-msg').classList.add('hidden');let b=document.getElementById('btn-generate');b.disabled=!0;b.textContent='Generating...';try{let k=await gen(chw,KEY_HOURS);rr(chw);let es=new Date(Date.now()+KEY_HOURS*36e5).toISOString().replace('T',' ').substring(0,16);document.getElementById('step-result').innerHTML='<div class="key-result"><div style="color:var(--success);font-size:13px;font-weight:600;margin-bottom:12px">Your 24-Hour License Key</div><div class="key-value">'+k+'</div><div class="key-label">HWID-bound - only works on YOUR machine</div><div class="key-expire">Expires: '+es+' UTC</div></div><div class="key-hint"><strong>How to activate:</strong><br>1. Open Draxo or inject DLL<br>2. Open menu (RSHIFT or INSERT)<br>3. CONFIG tab - LICENSE section<br>4. Paste key and click Activate</div>';document.getElementById('step-result').classList.remove('hidden')}catch(e){document.getElementById('step-result').innerHTML='<div class="alert alert-error">Error: '+(e.message||'Failed')+'</div>';document.getElementById('step-result').classList.remove('hidden')}finally{b.disabled=!1;b.textContent='Generate Key'}}
-// Self-check on load
-if(location.search.includes('check')||location.hash.includes('check')){sc().then(function(r){let ok=r[0],got=r[1];document.getElementById('check-banner').innerHTML=ok?'<div class="alert alert-success">Self-check PASSED - keygen matches DLL</div>':'<div class="alert alert-error">Self-check FAILED<br>Expected: DRAXO-5YQZZ-4VAK1-8FJGN-XTDDG-A9076-M<br>Got: '+got+'</div>'})}
+   Grants sind jetzt asymmetrisch (Ed25519). Signieren kann nur der
+   Server, weil nur er den privaten Schluessel hat. Das ist im Browser
+   grundsaetzlich nicht nachbaubar und auch nicht gewollt.
+
+   Dein Grant kommt aus dem Discord-Bot: dort "/key" ausfuehren oder
+   auf "Key holen" klicken. Er ist an dein Konto und (optional) an
+   deinen Rechner gebunden.
+   ══════════════════════════════════════════════════════════════════════ */
+function keygenRetired(){
+    var box = document.getElementById('step-result');
+    if (box) {
+        box.classList.remove('hidden');
+        box.innerHTML =
+            '<div class="guide-box"><div class="guide-summary" style="cursor:default">' +
+            'Key gibt es jetzt nur noch vom Server</div>' +
+            '<div class="guide-content">' +
+            'Diese Seite erzeugt keine Keys mehr. Ein Key kann nur noch der Server ' +
+            'signieren — deshalb bekommst du deinen direkt im Discord-Bot.<br><br>' +
+            '<strong>So gehst du vor:</strong><br>' +
+            '1. Starte den Draxo Launcher und melde dich mit Discord an.<br>' +
+            '2. Kopiere deine HWID aus der Lizenz-Karte (<strong>📋 Copy</strong>).<br>' +
+            '3. Im Discord-Server: <code>/key hwid:DEINE_HWID</code> oder den ' +
+            'Knopf <strong>🔑 Key holen</strong>.<br><br>' +
+            '<a href="https://discord.gg/5gXXHcv6nj" style="color:#8B5CF6;font-weight:700">' +
+            '💬 Zum Discord-Server</a>' +
+            '</div></div>';
+    }
+}
+document.addEventListener('DOMContentLoaded', keygenRetired);
 </script>
 </body>
 </html>
