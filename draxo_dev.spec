@@ -31,8 +31,8 @@ LAUNCHER_DIR = BASE_DIR / "launcher"
 
 # ── Assets (Quell → Ziel-Ordner im Bundle) ────────────────────────────────────
 _RAW_ASSETS = [
-    ("image.png", "."),
-    ("breites_logo_draxo.png", "."),
+    ("assets/branding/image.png", "assets/branding"),
+    ("assets/branding/breites_logo_draxo.png", "assets/branding"),
     ("draxo.ico", "."),
     ("VERSION", "."),
     ("src", "src"),
@@ -121,7 +121,8 @@ a = Analysis(
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
-_ico = str(BASE_DIR / "draxo.ico") if (BASE_DIR / "draxo.ico").exists() else None
+_ico = str(BASE_DIR / "assets" / "branding" / "draxo.ico")
+_ico = _ico if Path(_ico).exists() else None
 
 exe = EXE(
     pyz,

@@ -29,7 +29,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 LAUNCHER_DIR = ROOT / "launcher"
-FUNCTIONS = ROOT / "draxo-website-netlify" / "netlify" / "functions"
+FUNCTIONS = ROOT / "website" / "netlify" / "functions"
 
 NODE = shutil.which("node")
 HAS_NODE = NODE is not None

@@ -134,14 +134,34 @@ Draxo Client/
 │   ├── keygen.php             # Web-Keygen (identischer Algorithmus wie die DLL)
 │   └── keygen_reference.py    # Referenz-Keygen in Python
 │
-├── 🌐 Website
-│   └── netlify/               # Landingpage, Keygen, Changelog (EN/DE/ES/FR)
+├── 🌐 Website — website/
+│   ├── index.html, keygen.html, changelog.html, legal.html
+│   ├── i18n.js, version.json, logo.png, favicon.ico
+│   └── netlify/functions/     # interactions.js, _discord.js, _mint.js, _embeds.js
 │
-└── 📄 Dokumentation
-    ├── README.md
-    ├── BUILD_README.md        # Build-Anleitung
-    └── docs/                  # Support-Dokumente
-```
+├── 🧪 Tests — tests/
+│   └── 9 Dateien, 92 Tests (Grants, Mint-Server, Interaktionen, UI-Parität, Dev-Modus)
+│
+├── 🤖 Discord-Bot — bot/
+│   ├── draxo_bot/             # Bot, API, Signing, Store
+│   └── deploy/                # install.sh, update.sh, systemd-Unit
+│
+└── 📄 Dokumentation — docs/
+    ├── BUILD.md               # Build-Anleitung
+    ├── DOMAIN-SETUP.md        # Domain über Cloudflare/Netlify
+    ├── SUPPORT_HWID_KEYGEN.md
+    └── prompts/               # master_prompt.md.resolved
+
+Nicht im Repo, aber lokal vorhanden:
+
+| Ordner | Inhalt |
+|---|---|
+| `build/` | prebuilt-DLLs je Version, CMake-Build |
+| `dist/` | die beiden gebauten .exe |
+| `logs/` | Build-Notizen, Crashlogs, Road-to-Market-Notizen |
+| `archive/` | alte EXEs, Screenshots, ausgelagerte Duplikate |
+| `tools/cache/` | Mappings-Cache (mehrere MB je Version) |
+| `website/.netlify/` | Netlify-CLI-Cache + `state.json` mit der Site-ID |
 
 ---
 

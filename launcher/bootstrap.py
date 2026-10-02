@@ -164,7 +164,7 @@ class BootstrapWindow(ctk.CTkToplevel):
         logo_frame = ctk.CTkFrame(outer, fg_color="transparent")
         logo_frame.pack(pady=(32, 0))
 
-        image_path = resource_path("image.png")
+        image_path = resource_path("assets/branding/image.png")
         pil_img = load_image_safe(image_path, size=(80, 80))
         if pil_img:
             ctk_img = ctk.CTkImage(light_image=pil_img, dark_image=pil_img, size=(80, 80))
