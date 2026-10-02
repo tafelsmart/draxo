@@ -137,6 +137,35 @@ sudo systemctl enable --now cloudflared
 Den alten Quick Tunnel damit beenden — er lief nur manuell und ist nach
 dieser Umstellung überflüssig.
 
+## Deployen
+
+Die Website liegt in `website/` im Projekt-Root. Der Ordner hieß früher
+`draxo-website-netlify/` — im Netlify-Dashboard ist es trotzdem dieselbe
+Site, erkennbar an der ID in `website/.netlify/state.json`
+(`674509a4-4391-4182-a952-8e5e8cdbf8e4`). Ein `link` ist also nicht
+nötig; ohne die Datei würde Netlify ein neues Projekt anlegen.
+
+```cmd
+cd /d "C:\Projekte\Minecraft-java\Draxo Client\website"
+npx --yes netlify-cli@27.10.2 deploy --prod
+```
+
+Nach jedem Deploy prüfen, ob die Function noch antwortet — 401 ohne
+Signatur ist das richtige Ergebnis:
+
+```cmd
+curl -s -o nul -w "%{http_code}\n" -X POST ^
+  https://draxo.netlify.app/.netlify/functions/interactions
+```
+
+Deploys funktionieren nur über die CLI. Drag-und-drop im Dashboard
+ignoriert den `netlify/`-Ordner und stellt eine Seite ohne Functions
+bereit — die Interaktionen fallen dann still aus.
+
+Die Website bleibt absichtlich flach (`index.html` im Wurzelverzeichnis,
+Functions unter `netlify/functions/`). Netlify erwartet `publish = "."`;
+ein Unterordnen würde den Deploy brechen.
+
 ## Schritt 6 — Umgebungsvariablen
 
 **Netlify** (Site settings → Environment variables → dann neu deployen):
@@ -197,3 +226,7 @@ und die Ed25519-Prüfung läuft.
 | Tunnel antwortet 502 | `API_BIND` steht auf `127.0.0.1`, aber `cloudflared` läuft in einem anderen Netzwerk-Container — bzw. umgekehrt |
 | `curl` auf `api.` bekommt connection refused | Tunnel-Dienst läuft nicht: `systemctl status cloudflared` |
 | Website läuft, Bot mintet weiter | `DRAXO_MINT_URL` in Netlify nicht neu deployed |
+| Deploy meldet "Site not found" | `website/.netlify/state.json` fehlt — `link` im Ordner `website/` wiederholen |
+| Deploy läuft, aber die Site ist eine neue | `link` wurde im falschen Ordner ausgeführt; dadurch ohne Site-ID deployt |
+| Functions fehlen nach dem Deploy | Drag-and-drop benutzt; die Function liegt in `website/netlify/functions/` |
+| `cd /d ...draxo-website-netlify` schlägt fehl | Der Ordner heißt jetzt `website/` |
