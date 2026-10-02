@@ -18,6 +18,9 @@ tools/cache/
 # ── Binaries (werden als Release-Artefakte verteilt, nicht eingecheckt) ───────
 *.exe
 *.dll
+# Alte Builds und Screenshots liegen in archive/ — beide sind gross
+# und gehoeren nicht ins Repo.
+archive/
 *.pdb
 *.lib
 *.obj
@@ -28,9 +31,13 @@ draxo_config.ini
 prebuilt/
 # ── Logs & Absturzberichte ────────────────────────────────────────────────────
 *.log
+logs/
 *crashlog*.txt
 build_*.txt
 prebuild_*.txt
+# Road-to-Market-Notizen lagen lange im Root, liegen jetzt in logs/
+roadtomarket.txt
+roadtomarkt.txt
 # ── Secrets & Webhooks ────────────────────────────────────────────────────────
 discord_webhook.txt
 # .env.* würde auch die Vorlage .env.example einschliessen — die gehört

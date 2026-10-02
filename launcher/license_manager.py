@@ -46,7 +46,9 @@ except Exception:  # pragma: no cover - only when imported standalone
     def get_workdir() -> Path:  # minimal inline fallback
         if getattr(sys, "frozen", False):
             return Path(sys.executable).resolve().parent
-        return Path(__file__).resolve().parent
+        # Eine Ebene ueber diesem Modul: die Module liegen in launcher/,
+        # der Projekt-Root ist der Parent.
+        return Path(__file__).resolve().parent.parent
 
 _PROJECT_DIR = get_workdir()
 _DLL_DIR = _PROJECT_DIR / "build" / "vanilla" / "Release"
@@ -85,6 +87,22 @@ def grant_detail(
 ) -> grants.Grant:
     """Prueft und liefert das volle Ergebnis inkl. Begruendung."""
     return grants.verify_grant(key, hwid=hwid or None, discord_id=discord_id, now=now)
+
+
+def _dev_mode() -> bool:
+    """True, wenn die Dev-Variante per Umgebung gesetzt ist.
+
+    Bewusst als duenne Huelle um discord_auth: so haben Launcher- und
+    Lizenzseite dieselbe Quelle und koennen nicht auseinanderlaufen.
+    """
+    try:
+        from discord_auth import dev_mode_enabled
+    except Exception:  # pragma: no cover - nur bei Teil-Import
+        import os
+
+        value = (os.environ.get("DRAXO_DEV_MODE") or "").strip().lower()
+        return value not in ("", "0", "false", "no", "off")
+    return dev_mode_enabled()
 
 
 def _server_url() -> str:
@@ -221,6 +239,21 @@ def get_license_status() -> LicenseStatus:
     """Read the current license state from the DLL config and validate it."""
     hwid = _get_hwid()
     key = _read_config_key("License.key")
+
+    if _dev_mode():
+        # Dev-Variante: als ACTIVE melden, damit jede Oberflaeche, die diesen
+        # Status benutzt, nicht gesperrt bleibt. Die Grant-Pruefung laeuft hier
+        # bewusst nicht — sie wuerde ohne Server-Grant scheitern und genau das
+        # verhindern, was die Dev-Variante erlauben soll. Das ist keine
+        # Signaturpruefung, die umgangen wird: eine erfundene Signatur faellt
+        # weiter durch, wenn sie jemand an die DLL uebergibt.
+        return LicenseStatus(
+            status="ACTIVE",
+            status_color="#2ed573",
+            expiry_str="Dev-Variante",
+            hwid=hwid,
+            key_preview="(kein Grant noetig)" if not key else key[:15] + "...",
+        )
 
     if not key:
         return LicenseStatus(

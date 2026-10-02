@@ -59,7 +59,7 @@ add_custom_command(TARGET draxo POST_BUILD
     COMMENT "Patching DLL integrity hash...")
 
 # ── Logo + Version neben die DLL kopieren ──────────────────────────────────
-set(DRAXO_LOGO_SRC "${CMAKE_SOURCE_DIR}/Logo.png")
+set(DRAXO_LOGO_SRC "${CMAKE_SOURCE_DIR}/assets/branding/Logo.png")
 if(EXISTS "${DRAXO_LOGO_SRC}")
     add_custom_command(TARGET draxo POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different

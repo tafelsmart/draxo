@@ -20,17 +20,30 @@ from PIL import Image
 logger = logging.getLogger("DraxoClient.utils")
 
 
+#: Verzeichnis, in dem diese Datei liegt — also ``<root>/launcher``.
+#: Der Projekt-Root ist die Elternebene davon.
+_MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
+
+
 def get_base_dir() -> Path:
     """
     Liefert das Verzeichnis, in dem eingebettete Ressourcen (image.png,
     draxo.ico, VERSION …) liegen.
 
     - Im PyInstaller-Bundle (.exe): sys._MEIPASS  (temporäres Entpack-Dir)
-    - Im normalen Python-Betrieb:  Ordner der utils.py
+    - Im normalen Python-Betrieb:  der Projekt-Root
+
+    Wichtig: nicht ``Path(__file__).parent``. Seit dem Umzug der Module
+    nach ``launcher/`` waere das der Unterordner, in dem aber weder die
+    Bilder noch die ``VERSION`` liegen — ``load_image_safe`` wuerde still
+    ausfallen und der Splash bliebe leer.
     """
     if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
         return Path(sys._MEIPASS)  # type: ignore[attr-defined]
-    return Path(os.path.dirname(os.path.abspath(__file__)))
+
+    # Ein Ebene hoch = Projekt-Root. Im Bundle-Fall ist der Pfad egal,
+    # dort gewinnt der _MEIPASS-Zweig oben.
+    return _MODULE_DIR.parent
 
 
 def get_workdir() -> Path:
@@ -38,37 +51,36 @@ def get_workdir() -> Path:
     Liefert den Projekt-Root — also den Ordner, in dem ``tools/`` liegt
     und in dem ``python tools/vanilla_builder.py`` ausgeführt werden soll.
 
-    Drei Fälle werden unterschieden:
+    Zwei Fälle werden unterschieden:
 
     1. **Frozen (.exe)**: Die .exe liegt selbst im Projekt-Root
        (User hat DraxoLauncher.exe direkt in den Draxo-Client-Ordner gelegt).
        → ``Path(sys.executable).parent``
 
-    2. **Dev-Modus, Launcher im Projekt-Root**: utils.py liegt auf gleicher
-       Ebene wie ``tools/``.
-       → ``Path(__file__).resolve().parent``
+    2. **Dev-Modus**: Der Projekt-Root wird gesucht, nicht geraten. Gesucht
+       wird ausgehend von ``launcher/`` nach oben, plus das aktuelle
+       Arbeitsverzeichnis — dann funktioniert es unabhaengig davon, ob man
+       den Shim im Root oder ein Modul direkt in ``launcher/`` startet.
 
-    3. **Dev-Modus, Launcher in Unterordner**: utils.py liegt eine Ebene
-       unterhalb des Projekt-Roots (z. B. ``launcher/``).
-       → ``Path(__file__).resolve().parent.parent``
-
-    Als letzter Fallback wird das aktuelle Arbeitsverzeichnis verwendet.
+    Der Suchlauf nach ``tools/`` ist absichtlich: ``src/``, ``build/prebuilt``
+    und ``CMakeLists.txt`` muessen zum selben Root gehoeren, sonst findet
+    der Inject spaeter weder die vorgebauten DLLs noch die Include-Pfade.
     """
     if getattr(sys, "frozen", False):
         # Im Bundle liegt die .exe direkt im Projekt-Root
         return Path(sys.executable).resolve().parent
 
-    # Dev-Modus: auto-detect
-    here = Path(os.path.abspath(__file__)).resolve().parent
-    for candidate in (here, here.parent, Path.cwd()):
+    # Dev-Modus: auto-detect. _MODULE_DIR ist <root>/launcher, also beginnt
+    # die Suche dort und geht nach oben — unabhaengig davon, wie tief das
+    # Projekt liegt.
+    for candidate in (_MODULE_DIR, _MODULE_DIR.parent, Path.cwd()):
         if (candidate / "tools").exists():
             return candidate
 
-    # Letzter Fallback: Ordner der utils.py
     logger.warning(
-        "tools/-Verzeichnis nicht gefunden. Nutze Fallback: %s", here
+        "tools/-Verzeichnis nicht gefunden. Nutze Fallback: %s", _MODULE_DIR
     )
-    return here
+    return _MODULE_DIR.parent
 
 
 def resource_path(filename: str) -> Path:

@@ -197,7 +197,7 @@ class MainWindow(ctk.CTk):
         center_window(self, w, h)
         self.minsize(w, h)
 
-        icon_path = resource_path("draxo.ico")
+        icon_path = resource_path("assets/branding/draxo.ico")
         if icon_path.exists():
             try:
                 self.iconbitmap(default=str(icon_path))

@@ -58,7 +58,7 @@ python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
 
-python draxo_launcher.py
+python launcher/draxo_launcher.py
 ```
 
 Oder einfach [Starte Draxo Launcher.bat](Starte%20Draxo%20Launcher.bat) per Doppelklick.
@@ -66,7 +66,7 @@ Oder einfach [Starte Draxo Launcher.bat](Starte%20Draxo%20Launcher.bat) per Dopp
 ### Inject
 
 1. Minecraft starten (Vanilla, Forge oder NeoForge — **1.17 oder neuer**)
-2. `DraxoLauncher.exe` (bzw. `python draxo_launcher.py`) öffnen
+2. `DraxoLauncher.exe` (bzw. `python launcher/draxo_launcher.py`) öffnen
 3. Der Launcher erkennt die laufende Instanz automatisch
 4. **INJECT** klicken
 
@@ -76,33 +76,42 @@ Der Client öffnet sich mit dem `GUI`-Keybind (Standard: **Right Shift**) im Spi
 
 ## 📂 Projektstruktur
 
-Es gibt bewusst **genau eine Quelle der Wahrheit** — den Projekt-Root. Ein früherer `Claudelauncher/`-Ordner wurde entfernt, weil er zu veralteten Builds führte.
+Es gibt bewusst **genau eine Quelle der Wahrheit** — den Projekt-Root. Dort liegen alle Pfade, die der Build braucht: `src/`, `tools/`, `imgui/`, `minhook-master/`, `assets/`, `VERSION` und `build/prebuilt/`. Die Python-Module liegen in `launcher/` und importieren sich untereinander flach; ein dünner Shim im Root legt `launcher/` in den `sys.path`.
 
 ```
 Draxo Client/
 │
-├── draxo_launcher.py          # Einstiegspunkt: Logging, Fehlerbehandlung, Fensterstart
-│
-├── 🐍 Launcher (Python)
+├── 🐍 Launcher (Python) — alles in launcher/
+│   ├── draxo_launcher.py      # Einstiegspunkt: Logging, Fehlerbehandlung, Fensterstart
 │   ├── bootstrap.py           # Premium-Splash: Update-Check, Python-Suche, pip-Setup
 │   ├── ui.py                  # Hauptfenster: Logo, Status, INJECT-Button
+│   ├── auth_ui.py             # Discord-Anmeldefenster
 │   ├── updater.py             # GitHub-Releases-Check, Download, Neustart via .bat
 │   ├── process_detector.py    # Findet javaw.exe + Versions-/Flavor-Erkennung
 │   ├── builder_runner.py      # Bindeglied Launcher → Builder (Dev / Frozen / Prebuilt)
 │   ├── setup_manager.py       # Ersteinrichtung: Python finden, pip-Pakete installieren
-│   ├── license_manager.py     # HWID + Key-Validierung (spiegelt auth.cpp exakt)
-│   ├── versions.py            # Live-Minecraft-Versionen + Offline-Fallback
+│   ├── license_manager.py     # HWID + Grant-Validierung (nutzt license_signing)
+│   ├── license_signing.py     # Ed25519-Grant: Format, Pruefen, oeffentlicher Schluessel
+│   ├── discord_auth.py        # OAuth2 + PKCE, Token-Ablage via DPAPI, Dev-Modus
+│   ├── versions.py            # Live-Minecraft-Versionen + statischer Fallback
 │   ├── config.py              # Persistente config.json
 │   ├── styles.py              # Design-Tokens (Farben, Fonts, Layout)
+│   ├── widgets.py             # Wiederverwendbare UI-Bausteine
 │   ├── animations.py          # Fade-In, Glow, Scale-In
 │   ├── particles.py           # Partikel-Hintergrund
-│   └── utils.py               # Pfadauflösung, Logging, Bildladen
+│   └── utils.py               # Pfadaufloesung, Logging, Bildladen
 │
 ├── ⚙️ Build & Distribution
-│   ├── build_exe.py           # PyInstaller-Build → dist/DraxoLauncher.exe
-│   ├── draxo_launcher.spec    # PyInstaller-Spec (Assets, Prebuilt-DLLs, Hidden Imports)
-│   ├── release.py             # Release-Orchestrierung
-│   └── VERSION                # Einzelne Quelle der Wahrheit für die Version
+│   ├── scripts/build_exe.py           # PyInstaller-Build → dist/DraxoLauncher.exe
+│   ├── scripts/dev_mode_hook.py       # Runtime-Hook der Dev-EXE
+│   ├── draxo_launcher.spec            # Release-Spec (Assets, Prebuilt-DLLs, Imports)
+│   ├── draxo_dev.spec                 # Dev-Spec (Release + dev_mode_hook)
+│   ├── VERSION                        # Einzelne Quelle der Wahrheit fuer die Version
+│   └── build/                         # prebuilt/<version>/draxo*.dll, vanilla/Release/
+│
+├── 🔧 Hilfsskripte — scripts/
+│   ├── build_exe.py, release.py, license_flow.py, crash_test.py
+│   └── _shot*.py, _capture.py         # Screenshot-Helfer
 │
 ├── 🎮 Client (C++)
 │   ├── CMakeLists.txt         # Baut draxo.dll (C++20, ImGui, MinHook)
@@ -125,14 +134,34 @@ Draxo Client/
 │   ├── keygen.php             # Web-Keygen (identischer Algorithmus wie die DLL)
 │   └── keygen_reference.py    # Referenz-Keygen in Python
 │
-├── 🌐 Website
-│   └── netlify/               # Landingpage, Keygen, Changelog (EN/DE/ES/FR)
+├── 🌐 Website — website/
+│   ├── index.html, keygen.html, changelog.html, legal.html
+│   ├── i18n.js, version.json, logo.png, favicon.ico
+│   └── netlify/functions/     # interactions.js, _discord.js, _mint.js, _embeds.js
 │
-└── 📄 Dokumentation
-    ├── README.md
-    ├── BUILD_README.md        # Build-Anleitung
-    └── docs/                  # Support-Dokumente
-```
+├── 🧪 Tests — tests/
+│   └── 9 Dateien, 92 Tests (Grants, Mint-Server, Interaktionen, UI-Parität, Dev-Modus)
+│
+├── 🤖 Discord-Bot — bot/
+│   ├── draxo_bot/             # Bot, API, Signing, Store
+│   └── deploy/                # install.sh, update.sh, systemd-Unit
+│
+└── 📄 Dokumentation — docs/
+    ├── BUILD.md               # Build-Anleitung
+    ├── DOMAIN-SETUP.md        # Domain über Cloudflare/Netlify
+    ├── SUPPORT_HWID_KEYGEN.md
+    └── prompts/               # master_prompt.md.resolved
+
+Nicht im Repo, aber lokal vorhanden:
+
+| Ordner | Inhalt |
+|---|---|
+| `build/` | prebuilt-DLLs je Version, CMake-Build |
+| `dist/` | die beiden gebauten .exe |
+| `logs/` | Build-Notizen, Crashlogs, Road-to-Market-Notizen |
+| `archive/` | alte EXEs, Screenshots, ausgelagerte Duplikate |
+| `tools/cache/` | Mappings-Cache (mehrere MB je Version) |
+| `website/.netlify/` | Netlify-CLI-Cache + `state.json` mit der Site-ID |
 
 ---
 
@@ -212,7 +241,7 @@ Weitere Details: [docs/SUPPORT_HWID_KEYGEN.md](docs/SUPPORT_HWID_KEYGEN.md)
 
 ```bash
 pip install pyinstaller
-python build_exe.py
+python scripts/build_exe.py
 ```
 
 Ergebnis: `dist/DraxoLauncher.exe`
@@ -245,7 +274,7 @@ cmake --build build/vanilla --config Release
 python tools/prebuild_dlls.py        # erzeugt build/prebuilt/<version>/draxo.dll
 ```
 
-> **Wichtig:** `build/` niemals blind löschen — dort liegen die vorgefertigten DLLs **und** `draxo_config.ini` mit dem Lizenz-Key. `build_exe.py` löscht deshalb gezielt nur `dist/` und `build/draxo_launcher/`.
+> **Wichtig:** `build/` niemals blind löschen — dort liegen die vorgefertigten DLLs **und** `draxo_config.ini` mit dem Lizenz-Key. `scripts/build_exe.py` löscht deshalb gezielt nur `dist/` und `build/draxo_launcher/`.
 
 ---
 

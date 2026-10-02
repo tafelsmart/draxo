@@ -4,7 +4,7 @@
 
 ```bash
 # Im Projekt-Root (C:/Draxo Client):
-python build_exe.py
+python scripts/build_exe.py
 ```
 
 Ergebnis: `dist/DraxoLauncher.exe`
@@ -13,7 +13,7 @@ Ergebnis: `dist/DraxoLauncher.exe`
 
 ```bash
 # Im Projekt-Root:
-python draxo_launcher.py
+python launcher/draxo_launcher.py
 # oder per Doppelklick auf: Starte Draxo Launcher.bat
 ```
 
@@ -21,12 +21,12 @@ python draxo_launcher.py
 
 Alle Launcher-Dateien liegen im **Projekt-ROOT**:
 
-- `draxo_launcher.py` (Einstiegspunkt)
+- `launcher/draxo_launcher.py` (Einstiegspunkt)
 - `ui.py`, `license_manager.py`, `updater.py`, `styles.py`,
   `utils.py`, `versions.py`, `config.py`, `animations.py`,
   `particles.py`, `process_detector.py`, `license_flow.py`
 
-Der Build (`build_exe.py` + `draxo_launcher.spec`) liest ausschliesslich
+Der Build (`scripts/build_exe.py` + `draxo_launcher.spec`) liest ausschliesslich
 aus dem Root. Es gibt KEINE zweite Quelle mehr (der alte `Claudelauncher/`
 Ordner wurde geloescht, weil er zu veralteten Builds fuehrte).
 

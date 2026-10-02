@@ -28,7 +28,9 @@ import urllib.error
 import urllib.request
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+LAUNCHER_DIR = ROOT / "launcher"
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(LAUNCHER_DIR))
 sys.path.insert(0, str(ROOT / "bot"))
 
 import license_manager as lm  # noqa: E402

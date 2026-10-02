@@ -33,6 +33,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+LAUNCHER_DIR = ROOT / "launcher"
 SCRIPT = ROOT / "bot" / "deploy" / "update.sh"
 BASH = shutil.which("bash")
 
@@ -58,6 +59,7 @@ def _public_from_seed(seed_hex: str) -> str:
     Seiten auseinanderlaufen koennten.
     """
     sys.path.insert(0, str(ROOT))
+    sys.path.insert(0, str(LAUNCHER_DIR))
     import license_signing
 
     return license_signing.public_from_seed(bytes.fromhex(seed_hex)).hex()
@@ -151,7 +153,7 @@ class DeployTestBase(unittest.TestCase):
             source = ROOT / "bot" / "draxo_bot" / name
             if source.is_file():
                 shutil.copy(source, install / "draxo_bot" / name)
-        shutil.copy(ROOT / "license_signing.py", install / "license_signing.py")
+        shutil.copy(LAUNCHER_DIR / "license_signing.py", install / "license_signing.py")
         (install / "requirements.txt").write_text("discord.py>=2.4,<3\n", encoding="utf-8")
 
         (install / ".env").write_text(

@@ -155,7 +155,7 @@ Bot vollständig — ohne Discord, ohne Gateway.
 
 ## Netlify
 
-1. `draxo-website-netlify/` als Site deployen
+1. `website/` als Site deployen
 2. Unter **Environment variables** setzen:
 
 | Variable | Wert |

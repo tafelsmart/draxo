@@ -39,7 +39,8 @@ LINKVERTISE_LINKS = [
 KEYGEN_URL = "https://draxo.netlify.app/keygen.html"
 
 # ====== PATHS ==========================================================
-DLL_DIR = Path(__file__).resolve().parent.parent / "build" / "vanilla" / "Release"
+_PROJECT_DIR = Path(__file__).resolve().parent.parent
+DLL_DIR = _PROJECT_DIR / "build" / "vanilla" / "Release"
 CONFIG_FILE = DLL_DIR / "draxo_config.ini"
 
 
@@ -112,7 +113,7 @@ def dev_keygen(hwid: str, hours: int) -> str:
     """Generate a Draxo license key using the internal keygen (no Linkvertise).
     This mirrors the C++ algorithm in src/core/auth.cpp exactly."""
     import sys as _sys
-    _tools_dir = Path(__file__).resolve().parent.parent / "tools"
+    _tools_dir = _PROJECT_DIR / "tools"
     _sys.path.insert(0, str(_tools_dir))
     from keygen_reference import generate_key
     return generate_key(hwid, hours)

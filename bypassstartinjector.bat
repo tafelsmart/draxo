@@ -1,22 +1,38 @@
 @echo off
 REM ============================================================
-REM  Draxo Client — Launcher starten
+REM  Draxo Client - Dev-Variante (Start Injector)
+REM
+REM  Startet den Launcher fuer Entwicklung und Tests, ohne Discord-
+REM  Anmeldung: das Anmeldefenster und das Injektions-Gate werden
+REM  dabei uebergangen. Der Schalter ist die Umgebungsvariable
+REM  DRAXO_DEV_MODE, gelesen in discord_auth.py (Sitzung) und
+REM  license_manager.py (Lizenzstatus).
+REM
+REM  WICHTIG: Das ist KEIN Offline-Modus. Netz, Update-Check,
+REM  Versionsliste und Lizenzpruefung laufen unveraendert weiter.
+REM  Es fehlt ausschliesslich die Discord-Anmeldung.
 REM
 REM  WICHTIG fuer die Programmierung:
 REM   Diese Datei MUSS CRLF-Zeilenenden haben, kein LF. Mit LF
 REM   bricht cmd.exe die Klammerbloecke ab.
 REM
-REM   Zwei cmd-Fallstricke sind hier bewusst vermieden:
-REM   1) Verschachtelte Klammerbloecke: dort werden %VARIABLE% und
-REM      "if defined" ZUM PARS-ZEITPUNKT ausgewertet, nicht zur
-REM      Laufzeit. Wertet man darin eine Variable, die eine for-
-REM      Schleife erst danach setzt, ist sie immer leer.
-REM   2) Deshalb wird jede Pruefung ueber :label + goto gesteuert
-REM      und nicht ueber Verschachtelung.
+REM   Die Python-Suche ist bewusst dieselbe wie in
+REM   "Starte Draxo Launcher.bat": config.json, dann "py -3",
+REM   dann "python". Jeder Kandidat wird nur akzeptiert, wenn er
+REM   die Pakete aus requirements.txt auch wirklich hat.
+REM
+REM   Warum keine verschachtelten Klammerbloecke: dort werden
+REM   %VARIABLE% und "if defined" zum Parse-Zeitpunkt ausgewertet,
+REM   nicht zur Laufzeit. Wertet man darin eine Variable, die eine
+REM   for-Schleife erst danach setzt, ist sie immer leer. Deshalb
+REM   wird jede Pruefung ueber :label + goto gesteuert.
 REM ============================================================
 
-title Draxo Client Launcher
+title Draxo Client - Dev-Variante
 cd /d "%~dp0"
+
+REM Der ganze Schalter.
+set "DRAXO_DEV_MODE=1"
 
 set "PY="
 set "CAND="
@@ -24,11 +40,6 @@ set "CFGPATH="
 
 REM ------------------------------------------------------------
 REM 1) Kandidaten durchprobieren
-REM    Reihenfolge: config.json, dann "py -3", dann "python".
-REM    Jeder Kandidat wird nur akzeptiert, wenn er die Pakete auch
-REM    wirklich hat. Das ist wichtig, weil "py -3" auf vielen
-REM    Rechnern auf eine ANDERE Version zeigt als "python" —
-REM    und dann fehlen die Pakete.
 REM ------------------------------------------------------------
 
 REM 1a) Pfad aus config.json
@@ -62,6 +73,7 @@ set "PY=%CAND%"
 
 :found
 echo Python: %PY%
+echo Modus:  Dev-Variante (DRAXO_DEV_MODE=1) - keine Discord-Anmeldung noetig
 echo.
 "%PY%" launcher\draxo_launcher.py
 if errorlevel 1 goto :crashed
@@ -74,9 +86,6 @@ REM ============================================================
 :failed
 echo.
 echo [FEHLER] Kein einsatzbereites Python 3 gefunden.
-echo.
-echo   Es wurde eine Python-Installation gesucht, die die Pakete
-echo   aus requirements.txt bereits installiert hat.
 echo.
 echo   Falls Python installiert ist, aber die Pakete fehlen:
 echo       python -m pip install -r requirements.txt

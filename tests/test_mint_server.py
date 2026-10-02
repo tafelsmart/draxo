@@ -28,7 +28,9 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+LAUNCHER_DIR = ROOT / "launcher"
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(LAUNCHER_DIR))
 sys.path.insert(0, str(ROOT / "bot"))
 
 TEST_HWID = "3F2A9C4D8B1E7A05C6D9F2B3A4C5D6E7"

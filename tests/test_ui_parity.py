@@ -1,6 +1,6 @@
 """Hält die beiden Oberflächen zusammen.
 
-`bot/draxo_bot/ui.py` und `draxo-website-netlify/netlify/functions/_embeds.js`
+`bot/draxo_bot/ui.py` und `website/netlify/functions/_embeds.js`
 zeigen dasselbe Produkt in zwei Laufzeiten. Das ist eine bewusste
 Doppelung: ein gemeinsames Modul müsste der Python-Bot aus Node heraus
 aufrufen, bei jedem Knopfdruck.
@@ -27,7 +27,8 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-FUNCTIONS = ROOT / "draxo-website-netlify" / "netlify" / "functions"
+LAUNCHER_DIR = ROOT / "launcher"
+FUNCTIONS = ROOT / "website" / "netlify" / "functions"
 sys.path.insert(0, str(ROOT / "bot"))
 
 NODE = shutil.which("node")
