@@ -34,8 +34,10 @@ try:
     from utils import get_workdir
 except Exception:  # pragma: no cover - standalone
     def get_workdir() -> Path:
+        # Ohne utils: im Bundle der Ordner der EXE, sonst eine Ebene ueber
+        # diesem Modul (= Projekt-Root, seit die Module in launcher/ liegen).
         return Path(sys.executable).resolve().parent if getattr(
-            sys, "frozen", False) else Path(__file__).resolve().parent
+            sys, "frozen", False) else Path(__file__).resolve().parent.parent
 
 
 # DLL-Dateiname je Flavor. Muss mit FLAVOR_DLL in tools/vanilla_builder.py

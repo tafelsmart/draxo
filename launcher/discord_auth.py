@@ -97,6 +97,35 @@ def _env(name: str, default: str) -> str:
     return os.environ.get(name) or default
 
 
+#: Schaltet die Dev-Variante frei. Gesetzt von ``bypassstartinjector.bat``.
+#:
+#: Der Name ist bewusst "dev" und nicht "offline": die Netzfaehigkeiten des
+#: Launchers (Update-Check, Versionsliste, Lizenzserver-Abfrage) bleiben
+#: vollstaendig aktiv. Es fehlt nur die Discord-Anmeldung.
+DEV_MODE_ENV = "DRAXO_DEV_MODE"
+
+#: Anzeigename des Dev-Kontos. Bewusst als solcher benannt, damit in
+#: Screenshots und Logs erkennbar bleibt, dass kein Discord-Konto zugrunde liegt.
+DEV_USER_ID = "0"
+DEV_USER_NAME = "Draxo Dev"
+
+
+def dev_mode_enabled() -> bool:
+    """True, wenn ``DRAXO_DEV_MODE`` auf einen wahrheitsartigen Wert steht.
+
+    Gelesen wird bei jedem Abruf statt einmal beim Start: die .bat setzt die
+    Variable vor dem Prozessstart, aber ein Test kann sie auch mitten im
+    Lauf setzen oder loeschen.
+    """
+    value = (os.environ.get(DEV_MODE_ENV) or "").strip().lower()
+    return value not in ("", "0", "false", "no", "off")
+
+
+def _dev_user() -> DiscordUser:
+    """Das Pseudo-Konto der Dev-Variante."""
+    return DiscordUser(id=DEV_USER_ID, username=DEV_USER_NAME)
+
+
 def authorize_url() -> str:
     return _env("DRAXO_DISCORD_AUTHORIZE_URL", AUTHORIZE_URL)
 
@@ -213,12 +242,15 @@ class LoginResult:
 # ══════════════════════════════════════════════════════════════════
 
 def _workdir() -> Path:
-    """Projektordner — im gepackten Build der Ordner der EXE."""
+    """Projektordner — im gepackten Build der Ordner der EXE.
+
+    Hier liegt ``discord_oauth.json``, nicht in ``launcher/``.
+    """
     try:
         from utils import get_workdir
         return get_workdir()
     except Exception:  # pragma: no cover - nur bei direktem Import
-        return Path(__file__).resolve().parent
+        return Path(__file__).resolve().parent.parent
 
 
 def oauth_config_path() -> Path:
@@ -862,6 +894,21 @@ class DiscordSession:
     """Hält den Anmeldestatus über die Lebensdauer des Launchers.
 
     Blockierend — ``login()`` und ``restore()`` gehören in einen Thread.
+
+    Dev-Variante
+    ------------
+    Ist ``DRAXO_DEV_MODE`` gesetzt (siehe ``dev_mode_enabled``), meldet
+    diese Klasse eine lokale Entwickler-Anmeldung. Sie ist bewusst hier
+    implementiert und nicht im UI: das Injektions-Gate in ``ui.py`` und der
+    Anmeldeschritt in ``bootstrap.py`` fragen beide dieselbe Sitzung ab. Eine
+    Sonderbehandlung im UI wuerde nur eine der beiden Stellen oeffnen und die
+    andere weiterhin blockieren.
+
+    Die Dev-Variante ueberspringt nur die Anmeldung. Netz, Update-Check,
+    Versionsliste und Lizenzpruefung laufen unveraendert weiter — sie ist
+    zum Testen gedacht, nicht zum Arbeiten ohne Internet. Eine Signatur-
+    pruefung umgeht sie ebenfalls nicht: Grants werden weiterhin mit dem
+    oeffentlichen Server-Schluessel geprueft (siehe ``license_signing.py``).
     """
 
     def __init__(self) -> None:
@@ -870,6 +917,8 @@ class DiscordSession:
         self._tokens = TokenBundle()
         self._user: Optional[DiscordUser] = None
         self._lock = threading.Lock()
+        if dev_mode_enabled():
+            self._user = _dev_user()
 
     # ── Abfragen ───────────────────────────────────────────────────
 
@@ -879,11 +928,15 @@ class DiscordSession:
 
     @property
     def signed_in(self) -> bool:
+        if dev_mode_enabled():
+            return True
         return self._user is not None and bool(self._user.id)
 
     @property
     def display_name(self) -> str:
-        return self._user.display_name if self._user else "Nicht angemeldet"
+        if self._user is not None:
+            return self._user.display_name
+        return "Nicht angemeldet"
 
     @property
     def store_path(self) -> Path:
@@ -902,6 +955,10 @@ class DiscordSession:
 
     def restore(self) -> bool:
         """Lädt eine gespeicherte Anmeldung und erneuert sie bei Bedarf."""
+        if dev_mode_enabled():
+            # Nicht die Datei lesen: die Dev-Anmeldung ist lokal gueltig.
+            self._user = _dev_user()
+            return True
         with self._lock:
             user, tokens = self._store.load()
             if user is None:
@@ -927,6 +984,10 @@ class DiscordSession:
 
     def logout(self) -> None:
         """Meldet ab und löscht die lokal gespeicherten Tokens."""
+        if dev_mode_enabled():
+            # Abmelden darf die Dev-Variante nicht beenden — sonst
+            # sperrt das Gate die Injektion wieder, ohne sichtbaren Grund.
+            return
         with self._lock:
             self._user = None
             self._tokens = TokenBundle()

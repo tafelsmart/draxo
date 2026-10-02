@@ -1,12 +1,18 @@
 """
 build_exe.py
 ------------
-Erstellt DraxoLauncher.exe via PyInstaller.
+Erstellt die .exe-Dateien via PyInstaller.
 
 Verwendung:
-    python build_exe.py                    → Standard-Build
-    python build_exe.py --no-clean         → Ohne vorherigen Cleanup
-    python build_exe.py --copy-to-root     → Kopiert .exe in Projekt-Root
+    python scripts/build_exe.py                  → DraxoLauncher.exe (Release)
+    python scripts/build_exe.py --dev            → DraxoDev.exe (Dev-Variante)
+    python scripts/build_exe.py --both           → beide nacheinander
+    python scripts/build_exe.py --no-clean       → Ohne vorherigen Cleanup
+    python scripts/build_exe.py --copy-to-root   → Kopiert .exe in Projekt-Root
+
+Die Dev-Variante bindet scripts/dev_mode_hook.py ein und setzt damit beim
+Start DRAXO_DEV_MODE=1 — sie ueberspringt die Discord-Anmeldung, laesst aber
+Netz und Lizenzpruefung unangetastet.
 
 Voraussetzungen:
     pip install pyinstaller
@@ -36,11 +42,26 @@ if hasattr(sys.stderr, "reconfigure"):
     except Exception:  # noqa: BLE001
         pass
 
-BASE_DIR = Path(__file__).resolve().parent
+#: Dieses Skript liegt in scripts/, der Projekt-Root ist eine Ebene hoeher.
+BASE_DIR = Path(__file__).resolve().parent.parent
 DIST_DIR = BASE_DIR / "dist"
 BUILD_DIR = BASE_DIR / "build"
-SPEC_FILE = BASE_DIR / "draxo_launcher.spec"
-OUTPUT_EXE = DIST_DIR / "DraxoLauncher.exe"
+
+#: Die beiden Bauvarianten. "work" ist der PyInstaller-Zwischenordner unter
+#: build/ — der darf NICHT mit build/prebuilt oder build/vanilla kollidieren,
+#: sonst loescht der Cleanup die vorgebauten DLLs.
+VARIANTS: dict[str, dict[str, str]] = {
+    "release": {
+        "spec": "draxo_launcher.spec",
+        "exe": "DraxoLauncher.exe",
+        "work": "draxo_launcher",
+    },
+    "dev": {
+        "spec": "draxo_dev.spec",
+        "exe": "DraxoDev.exe",
+        "work": "draxo_dev",
+    },
+}
 
 
 # ── Hilfsfunktionen ────────────────────────────────────────────────────────────
@@ -59,25 +80,27 @@ def clean_previous_build() -> None:
     WICHTIG: Der Ordner build/ enthält auch build/prebuilt/ (vorgefertigte
     DLLs) und build/vanilla/ (die gebaute draxo.dll + config). Diese dürfen
     NIEMALS gelöscht werden — sonst ist der Toolchain-freie Inject kaputt.
-    Gelöscht werden nur dist/ und build/draxo_launcher/ (PyInstaller-Work).
+    Gelöscht werden nur dist/ und die beiden PyInstaller-Zwischenordner
+    (build/draxo_launcher/ und build/draxo_dev/).
     """
     if DIST_DIR.exists():
         _log("CLEAN", f"Lösche {DIST_DIR.name}/ ...")
         shutil.rmtree(DIST_DIR, ignore_errors=True)
-    pyi_work = BUILD_DIR / "draxo_launcher"
-    if pyi_work.exists():
-        _log("CLEAN", f"Lösche build/{pyi_work.name}/ ...")
-        shutil.rmtree(pyi_work, ignore_errors=True)
+    for v in VARIANTS.values():
+        pyi_work = BUILD_DIR / v["work"]
+        if pyi_work.exists():
+            _log("CLEAN", f"Lösche build/{pyi_work.name}/ ...")
+            shutil.rmtree(pyi_work, ignore_errors=True)
     _log("CLEAN", "Fertig.")
 
 
-def check_spec_file() -> None:
-    if not SPEC_FILE.exists():
+def check_spec_file(spec_path: Path) -> None:
+    if not spec_path.exists():
         raise FileNotFoundError(
-            f"draxo_launcher.spec nicht gefunden: {SPEC_FILE}\n"
-            "Stelle sicher, dass du build_exe.py aus dem Projektordner ausführst."
+            f"{spec_path.name} nicht gefunden: {spec_path}\n"
+            "Stelle sicher, dass du build_exe.py aus dem Projekt ausführst."
         )
-    _log("CHECK", f"Spec-Datei gefunden: {SPEC_FILE.name}")
+    _log("CHECK", f"Spec-Datei gefunden: {spec_path.name}")
 
 
 def ensure_pyinstaller() -> None:
@@ -111,11 +134,11 @@ def ensure_dependencies() -> None:
         _log("CHECK", "Abhängigkeiten OK.")
 
 
-def run_pyinstaller() -> None:
+def run_pyinstaller(spec_path: Path) -> None:
     """Führt PyInstaller mit der .spec-Datei aus."""
     cmd = [
         sys.executable, "-m", "PyInstaller",
-        str(SPEC_FILE),
+        str(spec_path),
         "--noconfirm",
         "--clean",
     ]
@@ -132,57 +155,69 @@ def run_pyinstaller() -> None:
     _log("BUILD", f"PyInstaller abgeschlossen in {elapsed:.1f}s.")
 
 
-def verify_output() -> Path:
+def verify_output(exe_name: str) -> Path:
     """Prüft, ob die .exe erzeugt wurde, und gibt ihren Pfad zurück."""
-    if not OUTPUT_EXE.exists():
+    exe_path = DIST_DIR / exe_name
+    if not exe_path.exists():
         raise FileNotFoundError(
-            f"DraxoLauncher.exe wurde nicht erzeugt.\n"
-            f"Erwartet unter: {OUTPUT_EXE}"
+            f"{exe_name} wurde nicht erzeugt.\n"
+            f"Erwartet unter: {exe_path}"
         )
-    size_mb = OUTPUT_EXE.stat().st_size / 1_048_576
-    _log("OK", f"DraxoLauncher.exe erstellt ({size_mb:.1f} MB)")
-    _log("OK", f"Pfad: {OUTPUT_EXE}")
-    return OUTPUT_EXE
+    size_mb = exe_path.stat().st_size / 1_048_576
+    _log("OK", f"{exe_name} erstellt ({size_mb:.1f} MB)")
+    _log("OK", f"Pfad: {exe_path}")
+    return exe_path
 
 
 def copy_to_root(exe_path: Path) -> None:
     """Kopiert die fertige .exe in den Projekt-Root (optional)."""
-    dest = BASE_DIR / "DraxoLauncher.exe"
+    dest = BASE_DIR / exe_path.name
     shutil.copy2(exe_path, dest)
-    _log("COPY", f"DraxoLauncher.exe → {dest}")
+    _log("COPY", f"{exe_path.name} → {dest}")
 
 
 # ── Haupt-Funktion ─────────────────────────────────────────────────────────────
 
-def main(no_clean: bool = False, copy_to_root_flag: bool = False) -> int:
+def build_variant(variant: str, copy_to_root_flag: bool = False) -> Path:
+    """Baut genau eine Variante (release oder dev)."""
+    spec = VARIANTS[variant]
+    spec_path = BASE_DIR / spec["spec"]
+    exe_name = spec["exe"]
+
     _hr()
-    print("  Draxo Client — Build-Script")
+    print(f"  Draxo Client — Build ({variant})")
     _hr()
 
-    steps = [
-        ("[1/5] Spec-Datei prüfen",       check_spec_file),
-        ("[2/5] PyInstaller prüfen",       ensure_pyinstaller),
-        ("[3/5] Abhängigkeiten prüfen",    ensure_dependencies),
-        ("[4/5] .exe bauen",               run_pyinstaller),
-    ]
-
-    if not no_clean:
-        steps.insert(0, ("[0/5] Aufräumen", clean_previous_build))
-
-    for label, fn in steps:
-        print(f"\n{label} ...")
-        fn()
+    check_spec_file(spec_path)
+    ensure_pyinstaller()
+    ensure_dependencies()
+    print("\n[4/5] .exe bauen ...")
+    run_pyinstaller(spec_path)
 
     print("\n[5/5] Ergebnis prüfen ...")
-    exe_path = verify_output()
+    exe_path = verify_output(exe_name)
 
     if copy_to_root_flag:
         print("\n[+] Kopiere ins Projekt-Root ...")
         copy_to_root(exe_path)
 
+    return exe_path
+
+
+def main(no_clean: bool = False, copy_to_root_flag: bool = False,
+         dev: bool = False, both: bool = False) -> int:
+    variants = ["release", "dev"] if both else (["dev"] if dev else ["release"])
+
+    if not no_clean:
+        clean_previous_build()
+
+    for variant in variants:
+        build_variant(variant, copy_to_root_flag)
+
     _hr()
-    print("  Build erfolgreich! Starte mit Doppelklick:")
-    print(f"  → {exe_path}")
+    print("  Build erfolgreich! Starten per Doppelklick:")
+    for variant in variants:
+        print(f"  → {DIST_DIR / VARIANTS[variant]['exe']}")
     _hr()
     return 0
 
@@ -191,10 +226,19 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Draxo Client Build-Script")
     parser.add_argument("--no-clean", action="store_true", help="dist/ und build/ nicht löschen")
     parser.add_argument("--copy-to-root", action="store_true", help=".exe in Projekt-Root kopieren")
+    parser.add_argument("--dev", action="store_true",
+                        help="DraxoDev.exe bauen (Dev-Variante, DRAXO_DEV_MODE=1)")
+    parser.add_argument("--both", action="store_true",
+                        help="Release- und Dev-Variante nacheinander bauen")
     args = parser.parse_args()
 
     try:
-        sys.exit(main(no_clean=args.no_clean, copy_to_root_flag=args.copy_to_root))
+        sys.exit(main(
+            no_clean=args.no_clean,
+            copy_to_root_flag=args.copy_to_root,
+            dev=args.dev,
+            both=args.both,
+        ))
     except KeyboardInterrupt:
         print("\n  [ABBRUCH] Durch Benutzer unterbrochen.")
         sys.exit(130)

@@ -35,7 +35,10 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+_ROOT = Path(__file__).resolve().parent.parent
+_LAUNCHER_DIR = _ROOT / "launcher"
+sys.path.insert(0, str(_ROOT))
+sys.path.insert(0, str(_LAUNCHER_DIR))
 
 CLIENT_ID = "1234567890123456789"
 ACCESS_TOKEN = "mock-access-token"

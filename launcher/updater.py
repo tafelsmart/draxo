@@ -47,6 +47,35 @@ logger = logging.getLogger("DraxoClient.updater")
 # ── Konstanten ─────────────────────────────────────────────────────────────────
 # Primary: GitHub Releases API — FREE, unlimited bandwidth, no Netlify credits.
 # The updater natively parses the GitHub API format (tag_name, assets[], body).
+def _workdir() -> Path:
+    """Projekt-Root — im gepackten Build der Ordner der EXE.
+
+    Wird fuer ``.git/config`` gebraucht, also fuer einen echten Ordner auf
+    der Platte. Im Bundle gibt es kein .git; das ist unkritisch, dann wird
+    die Repository-Erkennung eben uebersprungen.
+    """
+    try:
+        from utils import get_workdir
+        return get_workdir()
+    except Exception:  # pragma: no cover - nur bei direktem Import
+        return Path(__file__).resolve().parent.parent
+
+
+def _base_dir() -> Path:
+    """Basisordner der eingebetteten Ressourcen.
+
+    WICHTIG: nicht ``_workdir()``. Im Bundle liegt ``VERSION`` in
+    ``sys._MEIPASS``, nicht neben der .exe. Mit ``_workdir()`` faellt die
+    Versionsabfrage auf "1.0.0" zurueck — und die .exe laedt daraufhin
+    bei jedem Start ein Update von sich selbst.
+    """
+    try:
+        from utils import get_base_dir
+        return get_base_dir()
+    except Exception:  # pragma: no cover - nur bei direktem Import
+        return Path(__file__).resolve().parent.parent
+
+
 def _discover_github_repo() -> tuple[str, str]:
     """Ermittle owner/repo fuer den Release-Check.
 
@@ -68,7 +97,7 @@ def _discover_github_repo() -> tuple[str, str]:
     # dann wird die .git/config direkt gelesen).
     remote_url = ""
     try:
-        git_dir = Path(__file__).resolve().parent / ".git"
+        git_dir = _workdir() / ".git"
         cfg = git_dir / "config"
         if cfg.is_file():
             text = cfg.read_text(encoding="utf-8", errors="ignore")
@@ -104,7 +133,7 @@ NETLIFY_UPDATE_URL: str = "https://draxo.netlify.app/version.json"
 UPDATE_URL: str = GITHUB_API_URL
 FALLBACK_URL: str = NETLIFY_UPDATE_URL
 def _load_current_version() -> str:
-    _vfile = Path(__file__).resolve().parent / "VERSION"
+    _vfile = _base_dir() / "VERSION"
     if _vfile.exists():
         return _vfile.read_text(encoding="utf-8").strip() or "1.0.0"
     return "1.0.0"

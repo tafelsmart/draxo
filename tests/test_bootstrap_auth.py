@@ -15,7 +15,10 @@ import time
 from pathlib import Path
 
 # Wie in tests/test_discord_auth.py: Projektordner zuerst in den Pfad.
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+_ROOT = Path(__file__).resolve().parent.parent
+_LAUNCHER_DIR = _ROOT / "launcher"
+sys.path.insert(0, str(_ROOT))
+sys.path.insert(0, str(_LAUNCHER_DIR))
 
 from bootstrap import BootstrapWindow
 from config import ConfigManager

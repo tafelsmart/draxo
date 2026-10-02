@@ -28,6 +28,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+LAUNCHER_DIR = ROOT / "launcher"
 FUNCTIONS = ROOT / "draxo-website-netlify" / "netlify" / "functions"
 
 NODE = shutil.which("node")
@@ -187,6 +188,7 @@ class EndToEndTest(unittest.TestCase):
         die Meldung spricht von "timed out" statt von der Ursache.
         """
         sys.path.insert(0, str(ROOT))
+        sys.path.insert(0, str(LAUNCHER_DIR))
         sys.path.insert(0, str(ROOT / "bot"))
 
         from aiohttp import web  # noqa: PLC0415
